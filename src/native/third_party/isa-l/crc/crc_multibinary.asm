@@ -47,6 +47,9 @@ extern crc16_t10dif_base
 extern crc32_gzip_refl_by8
 extern crc32_gzip_refl_base
 
+extern crc16_t10dif_copy_by4
+extern crc16_t10dif_copy_base
+
 %include "multibinary.asm"
 
 section .data
@@ -66,7 +69,7 @@ section .text
 ;;;;
 ; crc32_iscsi multibinary function
 ;;;;
-global crc32_iscsi:function
+global crc32_iscsi:ISAL_SYM_TYPE_FUNCTION
 crc32_iscsi_mbinit:
 	call	crc32_iscsi_dispatch_init
 crc32_iscsi:
@@ -100,7 +103,7 @@ crc32_iscsi_dispatch_init:
 ;;;;
 ; crc32_ieee multibinary function
 ;;;;
-global crc32_ieee:function
+global crc32_ieee:ISAL_SYM_TYPE_FUNCTION
 crc32_ieee_mbinit:
 	call	crc32_ieee_dispatch_init
 crc32_ieee:
@@ -138,7 +141,7 @@ use_ieee_base:
 ;;;;
 ; crc16_t10dif multibinary function
 ;;;;
-global crc16_t10dif:function
+global crc16_t10dif:ISAL_SYM_TYPE_FUNCTION
 crc16_t10dif_mbinit:
 	call	crc16_t10dif_dispatch_init
 crc16_t10dif:
@@ -175,6 +178,9 @@ use_t10dif_base:
 
 mbin_interface			crc32_gzip_refl
 mbin_dispatch_init_clmul	crc32_gzip_refl, crc32_gzip_refl_base, crc32_gzip_refl_by8
+
+mbin_interface			crc16_t10dif_copy
+mbin_dispatch_init_clmul	crc16_t10dif_copy, crc16_t10dif_copy_base, crc16_t10dif_copy_by4
 
 ;;;       func            	core, ver, snum
 slversion crc16_t10dif,		00,   03,  011a

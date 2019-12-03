@@ -25,6 +25,7 @@ RUN dnf install -y -q --nogpgcheck vim \
     mongodb-org-mongos-3.6.3 \
     mongodb-org-tools-3.6.3 \
     which python3-virtualenv python36-devel libevent-devel libffi-devel libxml2-devel libxslt-devel zlib-devel \
+    gdb \
     git && \
     dnf clean all
 

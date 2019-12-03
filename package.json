@@ -11,7 +11,7 @@
   "scripts": {
     "install": "echo install hook override to avoid npm default hook calling node-gyp",
     "---": "------------------------------------------------------------------",
-    "build:native": "node-gyp rebuild",
+    "build:native": "node-gyp rebuild -d",
     "build:fe": "cd frontend && npm install && npm run build",
     "build": "npm run build:native && npm run build:fe",
     "----": "-----------------------------------------------------------------",

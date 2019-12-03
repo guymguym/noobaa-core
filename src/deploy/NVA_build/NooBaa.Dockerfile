@@ -1,7 +1,7 @@
 FROM noobaa-base as server_builder
 
 RUN mkdir -p /noobaa_init_files && \
-    cp -p ./build/Release/kube_pv_chown /noobaa_init_files
+    cp -p ./build/Debug/kube_pv_chown /noobaa_init_files
 
 COPY . ./
 ARG GIT_COMMIT 
@@ -28,7 +28,7 @@ RUN tar \
     .nvmrc \
     src/ \
     frontend/dist/ \
-    build/Release/ \
+    build/Debug/ \
     node_modules/ 
 
 #####################################################################################################################################
