@@ -1,7 +1,7 @@
 /* Copyright (C) 2016 NooBaa */
 'use strict';
 
-class AccountSpaceNB {
+class BucketSpaceNB {
 
     constructor(options) {
         this.rpc_client = options.rpc_client;
@@ -163,4 +163,4 @@ class AccountSpaceNB {
     }
 }
 
-module.exports = AccountSpaceNB;
+module.exports = BucketSpaceNB;

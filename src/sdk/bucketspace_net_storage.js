@@ -16,7 +16,7 @@ const CONFIG_FIELDS = [
     'ssl'
 ];
 
-class AccountSpaceNetStorage {
+class BucketSpaceNetStorage {
 
     constructor(options) {
         this.options = options;
@@ -31,7 +31,7 @@ class AccountSpaceNetStorage {
     list_buckets() {
         return P.fromCallback(callback => this.net_storage.dir(`${this.ns_config.cpCode}`, callback))
             .then(reply => {
-                dbg.log0('AccountSpaceNetStorage.list_buckets:', this.ns_config.cpCode, 'list_buckets', inspect(reply.body));
+                dbg.log0('BucketSpaceNetStorage.list_buckets:', this.ns_config.cpCode, 'list_buckets', inspect(reply.body));
                 return {
                     buckets: this._parse_net_storage_bucket_list(reply.body)
                 };
@@ -45,7 +45,7 @@ class AccountSpaceNetStorage {
     read_bucket(params) {
         return P.fromCallback(callback => this.net_storage.dir(`${this.ns_config.cpCode}/${params.name}`, callback))
             .then(res => {
-                dbg.log0('AccountSpaceNetStorage.read_bucket:', this.ns_config.cpCode, inspect(params), 'read_bucket', inspect(res.body));
+                dbg.log0('BucketSpaceNetStorage.read_bucket:', this.ns_config.cpCode, inspect(params), 'read_bucket', inspect(res.body));
             })
             .catch(err => {
                 this._translate_error_code(err);
@@ -58,7 +58,7 @@ class AccountSpaceNetStorage {
                 path: `${this.ns_config.cpCode}/${params.name}`
             }, callback))
             .then(res => {
-                dbg.log0('AccountSpaceNetStorage.create_bucket:', this.ns_config.cpCode, inspect(params), 'create_bucket', inspect(res.body));
+                dbg.log0('BucketSpaceNetStorage.create_bucket:', this.ns_config.cpCode, inspect(params), 'create_bucket', inspect(res.body));
             })
             .catch(err => {
                 this._translate_error_code(err);
@@ -71,7 +71,7 @@ class AccountSpaceNetStorage {
                 path: `${this.ns_config.cpCode}/${params.name}`
             }, callback))
             .then(res => {
-                dbg.log0('AccountSpaceNetStorage.delete_bucket:', this.ns_config.cpCode, inspect(params), 'delete_bucket', inspect(res.body));
+                dbg.log0('BucketSpaceNetStorage.delete_bucket:', this.ns_config.cpCode, inspect(params), 'delete_bucket', inspect(res.body));
             })
             .catch(err => {
                 this._translate_error_code(err);
@@ -94,4 +94,4 @@ function inspect(x) {
     return util.inspect(x, true, 5, true);
 }
 
-module.exports = AccountSpaceNetStorage;
+module.exports = BucketSpaceNetStorage;

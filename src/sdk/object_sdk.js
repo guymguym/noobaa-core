@@ -19,8 +19,9 @@ const NamespaceMerge = require('./namespace_merge');
 const NamespaceCache = require('./namespace_cache');
 const NamespaceMultipart = require('./namespace_multipart');
 const NamespaceNetStorage = require('./namespace_net_storage');
-const AccountSpaceNetStorage = require('./accountspace_net_storage');
-const AccountSpaceNB = require('./accountspace_nb');
+const BucketSpaceNetStorage = require('./bucketspace_net_storage');
+const BucketSpaceNB = require('./bucketspace_nb');
+const BucketSpaceFS = require('./bucketspace_fs');
 const stats_collector = require('./endpoint_stats_collector');
 const { RpcError } = require('../rpc');
 
@@ -58,11 +59,14 @@ class ObjectSDK {
         this.accountspace_nb = new AccountSpaceNB({
             rpc_client
         });
-    }
 
-    _get_account_namespace() {
+        this.bucketspace_nb = new BucketSpaceNB({ rpc_client });
+
+        if (process.env.BUCKETSPACE_FS) {
+            this.bucketspace_fs = new BucketSpaceFS({ fs_path: process.env.BUCKETSPACE_FS });
+        }
         if (process.env.AKAMAI_ACCOUNT_NS === 'true') {
-            return new AccountSpaceNetStorage({
+            this.bucketspace_net_storage = new BucketSpaceNetStorage({
                 // This is the endpoint
                 hostname: process.env.AKAMAI_HOSTNAME,
                 // This is the access key
@@ -75,8 +79,10 @@ class ObjectSDK {
                 ssl: false
             });
         }
+    }
 
-        return this.accountspace_nb;
+    _get_bucketspace() {
+        return this.bucketspace_fs || this.bucketspace_net_storage || this.bucketspace_nb;
     }
 
     async _get_bucket_namespace(name) {
@@ -116,7 +122,7 @@ class ObjectSDK {
         if (!token) {
             // TODO: Anonymous access to namespace buckets not supported
             if (ns) throw new RpcError('NOT_IMPLEMENTED', `Anonymous access to namespace buckets not supported`);
-            // TODO: Handle accountspace operations / RPC auth (i.e system, account, anonymous) and anonymous access
+            // TODO: Handle bucketspace operations / RPC auth (i.e system, account, anonymous) and anonymous access
             else return;
         }
         let account;
@@ -282,7 +288,7 @@ class ObjectSDK {
 
     set_auth_token(auth_token) {
         this.rpc_client.options.auth_token = auth_token;
-        this.accountspace_nb.set_auth_token(auth_token);
+        this.bucketspace_nb.set_auth_token(auth_token);
     }
 
     get_auth_token() {
@@ -294,22 +300,22 @@ class ObjectSDK {
     ////////////
 
     async list_buckets() {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.list_buckets();
     }
 
     async read_bucket(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.read_bucket(params);
     }
 
     async create_bucket(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.create_bucket(params);
     }
 
     async delete_bucket(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.delete_bucket(params);
     }
 
@@ -318,17 +324,17 @@ class ObjectSDK {
     //////////////////////
 
     get_bucket_lifecycle_configuration_rules(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.get_bucket_lifecycle_configuration_rules(params);
     }
 
     set_bucket_lifecycle_configuration_rules(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.set_bucket_lifecycle_configuration_rules(params);
     }
 
     delete_bucket_lifecycle(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.delete_bucket_lifecycle(params);
     }
 
@@ -337,7 +343,7 @@ class ObjectSDK {
     ///////////////////////
 
     async set_bucket_versioning(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.set_bucket_versioning(params);
     }
 
@@ -562,17 +568,17 @@ class ObjectSDK {
     ////////////////////
 
     async put_bucket_tagging(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.put_bucket_tagging(params);
     }
 
     async delete_bucket_tagging(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.delete_bucket_tagging(params);
     }
 
     async get_bucket_tagging(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.get_bucket_tagging(params);
     }
 
@@ -581,17 +587,17 @@ class ObjectSDK {
     ///////////////////////
 
     async put_bucket_encryption(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.put_bucket_encryption(params);
     }
 
     async delete_bucket_encryption(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.delete_bucket_encryption(params);
     }
 
     async get_bucket_encryption(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.get_bucket_encryption(params);
     }
 
@@ -600,17 +606,17 @@ class ObjectSDK {
     ////////////////////
 
     async put_bucket_website(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.put_bucket_website(params);
     }
 
     async delete_bucket_website(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.delete_bucket_website(params);
     }
 
     async get_bucket_website(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.get_bucket_website(params);
     }
 
@@ -619,20 +625,20 @@ class ObjectSDK {
     ////////////////////
 
     async put_bucket_policy(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         const result = await ns.put_bucket_policy(params);
         bucket_namespace_cache.invalidate_key(params.name);
         return result;
     }
 
     async delete_bucket_policy(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         bucket_namespace_cache.invalidate_key(params.name);
         return ns.delete_bucket_policy(params);
     }
 
     async get_bucket_policy(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         bucket_namespace_cache.invalidate_key(params.name);
         return ns.get_bucket_policy(params);
     }
@@ -667,12 +673,12 @@ class ObjectSDK {
     ////////////////////
 
     async get_object_lock_configuration(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.get_object_lock_configuration(params, this);
     }
 
     async put_object_lock_configuration(params) {
-        const ns = this._get_account_namespace();
+        const ns = this._get_bucketspace();
         return ns.put_object_lock_configuration(params, this);
     }
     async get_object_legal_hold(params) {
