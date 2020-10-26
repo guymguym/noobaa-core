@@ -6,7 +6,7 @@ const url = require('url');
 const net = require('net');
 const dns = require('dns');
 const request = require('request');
-const net_ping = require('net-ping');
+const net_ping = {}; // TODO require('net-ping');
 const ip_module = require('ip');
 
 const P = require('./promise');

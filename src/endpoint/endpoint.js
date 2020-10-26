@@ -22,9 +22,9 @@ const ObjectSDK = require('../sdk/object_sdk');
 const xml_utils = require('../util/xml_utils');
 const ssl_utils = require('../util/ssl_utils');
 const net_utils = require('../util/net_utils');
-const http_utils = require('../util/http_utils');
 const addr_utils = require('../util/addr_utils');
 const promise_utils = require('../util/promise_utils');
+const endpoint_utils = require('./endpoint_utils');
 const s3_rest = require('./s3/s3_rest');
 const blob_rest = require('./blob/blob_rest');
 const lambda_rest = require('./lambda/lambda_rest');
@@ -124,6 +124,12 @@ async function run_server(options) {
 
         const auth_token = await get_auth_token(process.env);
         const internal_rpc_client = server_rpc.rpc.new_client({ auth_token });
+
+        if (options.n2n_agent) {
+            const signal_client = rpc.new_client({ auth_token: server_rpc.client.options.auth_token });
+            const n2n_agent = rpc.register_n2n_agent(((...args) => signal_client.node.n2n_signal(...args)));
+            n2n_agent.set_any_rpc_address();
+        }
 
         const endpoint_request_handler = create_endpoint_handler(rpc, internal_rpc_client, options);
         if (options.ftp) start_ftp_endpoint(rpc, internal_rpc_client);
@@ -226,25 +232,11 @@ function create_endpoint_handler(rpc, internal_rpc_client, options) {
     const blob_rest_handler = options.blob ? blob_rest : unavailable_handler;
     const lambda_rest_handler = options.lambda ? lambda_rest : unavailable_handler;
 
-    if (options.n2n_agent) {
-        const signal_client = rpc.new_client({ auth_token: server_rpc.client.options.auth_token });
-        const n2n_agent = rpc.register_n2n_agent(((...args) => signal_client.node.n2n_signal(...args)));
-        n2n_agent.set_any_rpc_address();
-    }
-
     const object_io = new ObjectIO(LOCATION_INFO);
     return endpoint_request_handler;
 
     function endpoint_request_handler(req, res) {
-        // generate request id, this is lighter than uuid
-        req.request_id = `${
-            Date.now().toString(36)
-        }-${
-            process.hrtime()[1].toString(36)
-        }-${
-            Math.trunc(Math.random() * 65536).toString(36)
-        }`;
-        http_utils.parse_url_query(req);
+        endpoint_utils.prepare_rest_request(req);
 
         if (req.url.startsWith('/2015-03-31/functions')) {
             req.func_sdk = new FuncSDK(rpc.new_client());
@@ -261,6 +253,7 @@ function create_endpoint_handler(rpc, internal_rpc_client, options) {
         return s3_rest_handler(req, res);
     }
 }
+
 
 async function start_ftp_endpoint(rpc, internal_rpc_client) {
     try {
@@ -363,3 +356,4 @@ function setup_http_server(server) {
 
 exports.start_all = start_all;
 exports.create_endpoint_handler = create_endpoint_handler;
+exports.prepare_rest_request = prepare_rest_request;

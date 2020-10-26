@@ -86,6 +86,10 @@ verify-fe-lib: builder
 	@echo "\033[1;32mFrontend Library build verified.\033[0m"
 .PHONY: verify-fe-lib
 
+nsfs:
+	pkg --public --targets mac,linux --output noobaa-nsfs src/tools/nsfs.js
+.PHONY: nsfs
+
 clean:
 	@echo Stopping and Deleting containers
 	@$(CONTAINER_ENGINE) ps -a | grep noobaa_ | awk '{print $1}' | xargs $(CONTAINER_ENGINE) stop &> /dev/null
