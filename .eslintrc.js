@@ -89,7 +89,7 @@ module.exports = {
 
         // prefer small number of params to functions, otherwise send object
         // TODO eslint max-params per function should be reduced to ~4 instead of 6
-        'max-params': ['error', 7],
+        'max-params': ['error', 6],
 
         // max statements in function
         // TODO eslint max-statements per function should be reduced to ~40 instead of 60

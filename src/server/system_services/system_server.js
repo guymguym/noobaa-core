@@ -357,15 +357,15 @@ async function create_system(req) {
         });
 
         await system_store.make_changes(changes);
-        const auth = await _create_owner_account(
+        const auth = await _create_owner_account({
             name,
             email,
             password,
             must_change_password,
             account_id,
             system_id,
-            changes.insert.pools[0]._id
-        );
+            default_pool: changes.insert.pools[0]._id,
+        });
 
         const { token: operator_token } = await server_rpc.client.account.create_account({
             name,
@@ -415,7 +415,7 @@ async function _get_cluster_info() {
     return cluster_info;
 }
 
-async function _create_owner_account(
+async function _create_owner_account({
     name,
     email,
     password,
@@ -423,7 +423,7 @@ async function _create_owner_account(
     account_id,
     system_id,
     default_pool
-) {
+}) {
     dbg.log0(`create_system: creating account for ${name}, ${email}`);
     const { token: auth_token } = await server_rpc.client.account.create_account({
         name,
