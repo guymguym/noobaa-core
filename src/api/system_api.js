@@ -65,7 +65,8 @@ module.exports = {
                     // require password change on first login
                     must_change_password: {
                         type: 'boolean'
-                    }
+                    },
+                    chunk_coder_config: { $ref: 'common_api#/definitions/chunk_coder_config' },
                 },
             },
             reply: {
@@ -105,9 +106,8 @@ module.exports = {
                 type: 'object',
                 required: ['name'],
                 properties: {
-                    name: {
-                        type: 'string',
-                    },
+                    name: { type: 'string' },
+                    chunk_coder_config: { $ref: 'common_api#/definitions/chunk_coder_config' },
                 },
             },
             auth: {

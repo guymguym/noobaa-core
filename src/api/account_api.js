@@ -76,6 +76,7 @@ module.exports = {
                     role_config: {
                         $ref: 'common_api#/definitions/role_config'
                     },
+                    chunk_coder_config: { $ref: 'common_api#/definitions/chunk_coder_config' },
                 },
             },
             reply: {
@@ -201,6 +202,7 @@ module.exports = {
                     role_config: {
                         $ref: 'common_api#/definitions/role_config'
                     },
+                    chunk_coder_config: { $ref: 'common_api#/definitions/chunk_coder_config' },
                 }
             },
             auth: {
