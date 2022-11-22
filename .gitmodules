@@ -1,0 +1,6 @@
+[submodule "git_modules/s3select"]
+	path = git_modules/s3select
+	url = https://github.com/ceph/s3select
+[submodule "git_modules/boost"]
+	path = git_modules/boost
+	url = https://github.com/boostorg/boost
