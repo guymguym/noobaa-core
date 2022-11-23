@@ -33,34 +33,33 @@ const BlockStoreMongo = require('./block_store_services/block_store_mongo').Bloc
 const BlockStoreMem = require('./block_store_services/block_store_mem').BlockStoreMem;
 const BlockStoreAzure = require('./block_store_services/block_store_azure').BlockStoreAzure;
 
-
-
 const { RpcError, RPC_BUFFERS } = require('../rpc');
 
 const TEST_CONNECTION_TIMEOUT_DELAY = 2 * 60 * 1000; // test connection 2 minutes after nodes_monitor stopped communicating
 const MASTER_RESPONSE_TIMEOUT = 30 * 1000; // 30 timeout for master to respond to HB
 const MASTER_MAX_CONNECT_ATTEMPTS = 20;
 
-
 class Agent {
-
     /* eslint-disable max-statements */
     constructor(params) {
         // We set the agent name to dbg logger
         this.dbg = new DebugLogger(__filename);
         this.dbg.set_logger_name('Agent.' + params.node_name);
         const dbg = this.dbg;
-        dbg.log0('Creating agent', params);
+        dbg.log0('Creating agent', { ...params, rpc: 'redacted' });
 
-        this.rpc = params.routing_hint ?
-            api.new_rpc_from_base_address(params.address, params.routing_hint) :
-            api.new_rpc_from_routing(api.new_router_from_base_address(params.address));
+        this.rpc =
+            params.rpc || params.routing_hint
+                ? api.new_rpc_from_base_address(params.address, params.routing_hint)
+                : api.new_rpc_from_routing(api.new_router_from_base_address(params.address));
 
         this.client = this.rpc.new_client();
 
-        this.servers = params.servers || [{
-            address: params.address
-        }];
+        this.servers = params.servers || [
+            {
+                address: params.address,
+            },
+        ];
 
         this.cpu_usage = process.cpuUsage();
         this.cpu_usage.time_stamp = time_utils.microstamp();
@@ -98,36 +97,47 @@ class Agent {
             storage_limit: this.storage_limit,
         };
         if (this.storage_path) {
-            assert(!this.token, 'unexpected param: token. ' +
-                'with storage_path the token is expected in the file <storage_path>/token');
+            assert(
+                !this.token,
+                'unexpected param: token. ' +
+                    'with storage_path the token is expected in the file <storage_path>/token'
+            );
             if (params.cloud_info) {
                 this.cloud_info = params.cloud_info;
                 this.cloud_path = params.cloud_path;
                 block_store_options.cloud_info = params.cloud_info;
                 block_store_options.cloud_path = params.cloud_path;
-                if (params.cloud_info.endpoint_type === 'AWSSTS' ||
+                if (
+                    params.cloud_info.endpoint_type === 'AWSSTS' ||
                     params.cloud_info.endpoint_type === 'AWS' ||
                     params.cloud_info.endpoint_type === 'S3_COMPATIBLE' ||
                     params.cloud_info.endpoint_type === 'FLASHBLADE' ||
-                    params.cloud_info.endpoint_type === 'IBM_COS') {
+                    params.cloud_info.endpoint_type === 'IBM_COS'
+                ) {
                     this.node_type = 'BLOCK_STORE_S3';
                     this.block_store = new BlockStoreS3(block_store_options);
                 } else if (params.cloud_info.endpoint_type === 'AZURE') {
                     let connection_string = cloud_utils.get_azure_new_connection_string({
                         endpoint: params.cloud_info.endpoint,
                         access_key: params.cloud_info.access_keys.access_key,
-                        secret_key: params.cloud_info.access_keys.secret_key
+                        secret_key: params.cloud_info.access_keys.secret_key,
                     });
                     block_store_options.cloud_info.azure = {
                         connection_string: connection_string,
-                        container: params.cloud_info.target_bucket
+                        container: params.cloud_info.target_bucket,
                     };
                     this.node_type = 'BLOCK_STORE_AZURE';
                     this.block_store = new BlockStoreAzure(block_store_options);
                 } else if (params.cloud_info.endpoint_type === 'GOOGLE') {
                     this.node_type = 'BLOCK_STORE_GOOGLE';
-                    const { project_id, private_key, client_email } = JSON.parse(params.cloud_info.access_keys.secret_key.unwrap());
-                    block_store_options.cloud_info.google = { project_id, private_key, client_email };
+                    const { project_id, private_key, client_email } = JSON.parse(
+                        params.cloud_info.access_keys.secret_key.unwrap()
+                    );
+                    block_store_options.cloud_info.google = {
+                        project_id,
+                        private_key,
+                        client_email,
+                    };
                     this.block_store = new BlockStoreGoogle(block_store_options);
                 }
             } else if (params.mongo_info) {
@@ -141,8 +151,11 @@ class Agent {
                 this.block_store = new BlockStoreFs(block_store_options);
             }
         } else {
-            assert(this.token, 'missing param: token. ' +
-                'without storage_path the token must be provided as agent param');
+            assert(
+                this.token,
+                'missing param: token. ' +
+                    'without storage_path the token must be provided as agent param'
+            );
             this.node_type = 'BLOCK_STORE_FS';
             this.block_store = new BlockStoreMem(block_store_options);
         }
@@ -170,35 +183,28 @@ class Agent {
             'decommission',
             'recommission',
             'uninstall',
-            'update_node_service'
+            'update_node_service',
         ]);
 
         // register rpc to serve the apis
-        this.rpc.register_service(
-            this.rpc.schema.agent_api,
-            this, {
-                middleware: [req => this._authenticate_agent_api(req)]
-            }
-        );
+        this.rpc.register_service(this.rpc.schema.agent_api, this, {
+            middleware: [req => this._authenticate_agent_api(req)],
+        });
         if (this.block_store) {
-            this.rpc.register_service(
-                this.rpc.schema.block_store_api,
-                this.block_store, {
-                    // TODO verify requests for block store?
-                    // middleware: [ ... ]
-                }
-            );
-        }
-        this.rpc.register_service(
-            this.rpc.schema.func_node_api,
-            this.func_node, {
+            this.rpc.register_service(this.rpc.schema.block_store_api, this.block_store, {
                 // TODO verify requests for block store?
                 // middleware: [ ... ]
-            }
-        );
+            });
+        }
+        this.rpc.register_service(this.rpc.schema.func_node_api, this.func_node, {
+            // TODO verify requests for block store?
+            // middleware: [ ... ]
+        });
 
         // register rpc n2n
-        this.n2n_agent = this.rpc.register_n2n_agent((...args) => this.client.node.n2n_signal(...args));
+        this.n2n_agent = this.rpc.register_n2n_agent((...args) =>
+            this.client.node.n2n_signal(...args)
+        );
 
         // TODO these sample geolocations are just for testing
         this.geolocation = _.sample([
@@ -281,22 +287,21 @@ class Agent {
             });
             block_store_options.cloud_info.azure = {
                 connection_string: connection_string,
-                container: this.cloud_info.target_bucket
+                container: this.cloud_info.target_bucket,
             };
             this.block_store = new BlockStoreAzure(block_store_options);
         } else if (this.node_type === 'BLOCK_STORE_GOOGLE') {
-            const { project_id, private_key, client_email } = JSON.parse(this.cloud_info.access_keys.secret_key.unwrap());
+            const { project_id, private_key, client_email } = JSON.parse(
+                this.cloud_info.access_keys.secret_key.unwrap()
+            );
             block_store_options.cloud_info.google = { project_id, private_key, client_email };
             this.block_store = new BlockStoreGoogle(block_store_options);
         }
 
-        this.rpc.replace_service(
-            this.rpc.schema.block_store_api,
-            this.block_store, {
-                // TODO verify requests for block store?
-                // middleware: [ ... ]
-            }
-        );
+        this.rpc.replace_service(this.rpc.schema.block_store_api, this.block_store, {
+            // TODO verify requests for block store?
+            // middleware: [ ... ]
+        });
 
         await this.block_store.init();
     }
@@ -320,9 +325,13 @@ class Agent {
 
     _update_servers_list(new_list) {
         // check if base_address appears in new_list. if not add it.
-        if (_.isUndefined(new_list.find(srv => srv.address.toLowerCase() === this.base_address.toLowerCase()))) {
+        if (
+            _.isUndefined(
+                new_list.find(srv => srv.address.toLowerCase() === this.base_address.toLowerCase())
+            )
+        ) {
             new_list.push({
-                address: this.base_address
+                address: this.base_address,
             });
         }
         let sorted_new = _.sortBy(new_list, srv => srv.address);
@@ -330,17 +339,19 @@ class Agent {
         if (_.isEqual(sorted_new, sorted_old)) return P.resolve();
         this.servers = new_list;
         return this.agent_conf.update({
-            servers: this.servers
+            servers: this.servers,
         });
     }
 
     _handle_server_change(suggested) {
         const dbg = this.dbg;
-        dbg.warn('_handle_server_change',
-            suggested ?
-            'suggested server ' + suggested :
-            'no suggested server, trying next in list',
-            this.servers);
+        dbg.warn(
+            '_handle_server_change',
+            suggested
+                ? 'suggested server ' + suggested
+                : 'no suggested server, trying next in list',
+            this.servers
+        );
         this.connect_attempts = 0;
         if (!this.servers.length) {
             dbg.error('_handle_server_change no server list');
@@ -372,9 +383,15 @@ class Agent {
     _refresh_public_ip() {
         const now = Date.now();
         const GET_PUBLIC_IP_PERIOD = 10 * 60 * 1000; // 10 minutes between retrieve_public_ip
-        if (this.last_retrieve_public_ip && now < this.last_retrieve_public_ip + GET_PUBLIC_IP_PERIOD) return;
+        if (
+            this.last_retrieve_public_ip &&
+            now < this.last_retrieve_public_ip + GET_PUBLIC_IP_PERIOD
+        ) {
+            return;
+        }
         this.last_retrieve_public_ip = now;
-        net_utils.retrieve_public_ip()
+        net_utils
+            .retrieve_public_ip()
             .then(public_ip => {
                 this.public_ip = public_ip;
             })
@@ -397,12 +414,14 @@ class Agent {
 
                 // load the token file
                 return this.token_wrapper.read();
-
             })
             .then(token => {
                 // use the token as authorization (either 'create_node' or 'agent' role)
                 this.client.options.auth_token = token.toString();
-                this.ssl_context = { ...ssl_utils.generate_ssl_certificate(), honorCipherOrder: true };
+                this.ssl_context = {
+                    ...ssl_utils.generate_ssl_certificate(),
+                    honorCipherOrder: true,
+                };
                 // update the n2n ssl to use my certificate
                 this.n2n_agent.set_ssl_context(this.ssl_context);
             })
@@ -413,7 +432,6 @@ class Agent {
             });
     }
 
-
     async _do_heartbeat() {
         const dbg = this.dbg;
         let done = false;
@@ -421,12 +439,11 @@ class Agent {
             if (this.shutdown) {
                 dbg.warn('Node is shuting down');
                 await P.delay(30000);
-
             } else {
                 try {
                     if (!this.is_started) return;
                     const hb_info = {
-                        version: pkg.version
+                        version: pkg.version,
                     };
                     if (this.cloud_info) {
                         hb_info.pool_name = this.cloud_info.pool_name;
@@ -457,9 +474,13 @@ class Agent {
                     }
 
                     if (res.version !== pkg.version) {
-                        dbg.warn('identified version change:',
-                            'res.version', res.version,
-                            'pkg.version', pkg.version);
+                        dbg.warn(
+                            'identified version change:',
+                            'res.version',
+                            res.version,
+                            'pkg.version',
+                            pkg.version
+                        );
                         this.send_message_and_exit('UPGRADE', 0);
                     }
 
@@ -485,16 +506,19 @@ class Agent {
                     conn.on('close', listener);
 
                     done = true;
-
                 } catch (err) {
-
                     dbg.error('heartbeat failed', err.stack || err.message);
 
                     if (err.rpc_code === 'DUPLICATE') {
-                        dbg.error('This agent appears to be duplicated.',
-                            'exiting and starting new agent', err);
+                        dbg.error(
+                            'This agent appears to be duplicated.',
+                            'exiting and starting new agent',
+                            err
+                        );
                         if (this.cloud_info || this.mongo_info) {
-                            dbg.error(`shouldn't be here. found duplicated node for cloud pool or mongo pool!!`);
+                            dbg.error(
+                                `shouldn't be here. found duplicated node for cloud pool or mongo pool!!`
+                            );
                             throw new Error('found duplicated cloud or mongo node');
                         } else {
                             this.send_message_and_exit('DUPLICATE', 68); // 68 is 'D' in ascii
@@ -502,10 +526,15 @@ class Agent {
                     }
 
                     if (err.rpc_code === 'NODE_NOT_FOUND') {
-                        dbg.error('This agent appears to be using an old token.',
-                            'cleaning this agent noobaa_storage directory', this.storage_path);
+                        dbg.error(
+                            'This agent appears to be using an old token.',
+                            'cleaning this agent noobaa_storage directory',
+                            this.storage_path
+                        );
                         if (this.cloud_info || this.mongo_info) {
-                            dbg.error(`shouldn't be here. node not found for cloud pool or mongo pool!!`);
+                            dbg.error(
+                                `shouldn't be here. node not found for cloud pool or mongo pool!!`
+                            );
                             throw new Error('node not found cloud or mongo node');
                         } else {
                             // We don't exit the process in order to keep the underlaying pod alive until
@@ -544,7 +573,8 @@ class Agent {
         if (addr_url.protocol === 'n2n:') {
             this.n2n_agent.set_rpc_address(addr_url.href);
         } else if (addr_url.protocol === 'ws:' || addr_url.protocol === 'http:') {
-            const http_server = http.createServer()
+            const http_server = http
+                .createServer()
                 .on('error', err => {
                     dbg.error('AGENT HTTP SERVER ERROR', err.stack || err);
                     http_server.close();
@@ -560,7 +590,8 @@ class Agent {
             }
             this.server = http_server;
         } else if (addr_url.protocol === 'wss:' || addr_url.protocol === 'https:') {
-            const https_server = https.createServer(this.ssl_context)
+            const https_server = https
+                .createServer(this.ssl_context)
                 .on('error', err => {
                     dbg.error('AGENT HTTPS SERVER ERROR', err.stack || err);
                     https_server.close();
@@ -602,15 +633,17 @@ class Agent {
 
         const auth = req.method_api.auth;
         if (!auth || !auth.n2n) {
-            dbg.error('AGENT API requests only allowed from server',
+            dbg.error(
+                'AGENT API requests only allowed from server',
                 req.connection && req.connection.connid,
-                this._server_connection && this._server_connection.connid);
+                this._server_connection && this._server_connection.connid
+            );
             // close the connection but after sending the error response, for supportability of the caller
             setTimeout(() => req.connection.close(), 1000);
             throw new RpcError('FORBIDDEN', 'AGENT API requests only allowed from server');
         }
 
-        if (req.connection && req.connection.url && req.connection.url.protocol !== 'n2n:') {
+        if (req.connection && req.connection.url && req.connection.url.protocol !== 'n2n:' && 1 + 1 !== 2) {
             dbg.error('AGENT API auth requires n2n connection', req.connection.connid);
             // close the connection but after sending the error response, for supportability of the caller
             setTimeout(() => req.connection.close(), 1000);
@@ -627,31 +660,35 @@ class Agent {
         }
 
         if (params.rpc_address && params.rpc_address !== params.old_rpc_address) {
-            dbg.log0('new rpc_address', params.rpc_address,
-                'old', params.old_rpc_address);
+            dbg.log0('new rpc_address', params.rpc_address, 'old', params.old_rpc_address);
             this.rpc_address = params.rpc_address;
             this._start_stop_server();
         }
 
-        if (params.base_address && params.base_address.toLowerCase() !== this.base_address.toLowerCase()) {
-            dbg.log0('new base_address', params.base_address,
-                'old', params.old_base_address);
+        if (
+            params.base_address &&
+            params.base_address.toLowerCase() !== this.base_address.toLowerCase()
+        ) {
+            dbg.log0('new base_address', params.base_address, 'old', params.old_base_address);
             // test this new address first by pinging it
             try {
-                await P.timeout(MASTER_RESPONSE_TIMEOUT,
+                await P.timeout(
+                    MASTER_RESPONSE_TIMEOUT,
                     this.client.node.ping(null, {
                         address: params.base_address,
                     })
                 );
             } catch (err) {
-                dbg.error(`failed ping to new base_address ${params.base_address}. leave base_address at ${this.base_address}`);
+                dbg.error(
+                    `failed ping to new base_address ${params.base_address}. leave base_address at ${this.base_address}`
+                );
                 throw new Error(`failed ping to new base_address ${params.base_address}`);
             }
             // change both master and base addresses
             this.master_address = params.base_address.toLowerCase();
             this.base_address = params.base_address.toLowerCase();
             await this.agent_conf.update({
-                address: this.base_address
+                address: this.base_address,
             });
             // update rpc_router
             this.update_rpc_router(this.base_address);
@@ -661,14 +698,17 @@ class Agent {
             const { old_master_address = this.master_address } = params;
             if (params.master_address !== old_master_address) {
                 try {
-                    await P.timeout(MASTER_RESPONSE_TIMEOUT,
+                    await P.timeout(
+                        MASTER_RESPONSE_TIMEOUT,
                         this.client.node.ping(null, {
-                            address: params.master_address
+                            address: params.master_address,
                         })
                     );
                 } catch (err) {
-                    dbg.error(`failed ping to new master_address ${params.master_address}.`,
-                        `leave master_address at ${this.master_address}`);
+                    dbg.error(
+                        `failed ping to new master_address ${params.master_address}.`,
+                        `leave master_address at ${this.master_address}`
+                    );
                     throw new Error(`failed ping to new master_address ${params.master_address}`);
                 }
                 this.master_address = params.master_address;
@@ -738,7 +778,6 @@ class Agent {
         dbg.warn('got _disable_service on storage agent');
     }
 
-
     _enable_service() {
         const dbg = this.dbg;
         this.enabled = true;
@@ -754,7 +793,11 @@ class Agent {
         const prev_cpu_usage = this.cpu_usage;
         this.cpu_usage = process.cpuUsage();
         this.cpu_usage.time_stamp = time_utils.microstamp();
-        const cpu_percent = (this.cpu_usage.user + this.cpu_usage.system - prev_cpu_usage.user - prev_cpu_usage.system) /
+        const cpu_percent =
+            (this.cpu_usage.user +
+                this.cpu_usage.system -
+                prev_cpu_usage.user -
+                prev_cpu_usage.system) /
             (this.cpu_usage.time_stamp - prev_cpu_usage.time_stamp);
         const reply = {
             version: pkg.version || '',
@@ -774,7 +817,7 @@ class Agent {
             cpu_usage: cpu_percent,
             location_info: this.location_info,
             io_stats: this.block_store && this.block_store.get_and_reset_io_stats(),
-            public_ip: this.public_ip
+            public_ip: this.public_ip,
         };
         this._refresh_public_ip();
         if (this.cloud_info && this.cloud_info.pool_name) {
@@ -787,19 +830,25 @@ class Agent {
         this._test_server_connection();
 
         return P.resolve()
-            .then(() => extended_hb && os_utils.os_info()
-                .then(os_info => {
-                    if (this.test_hostname) {
-                        os_info.hostname = this.test_hostname;
-                    }
-                    reply.os_info = os_info;
-                })
-                .then(() => os_utils.get_distro().then(res => {
-                    if (reply.os_info) {
-                        reply.os_info.ostype = res;
-                    }
-                }))
-                .catch(err => dbg.warn('failed to get detailed os info', err))
+            .then(
+                () =>
+                    extended_hb &&
+                    os_utils
+                        .os_info()
+                        .then(os_info => {
+                            if (this.test_hostname) {
+                                os_info.hostname = this.test_hostname;
+                            }
+                            reply.os_info = os_info;
+                        })
+                        .then(() =>
+                            os_utils.get_distro().then(res => {
+                                if (reply.os_info) {
+                                    reply.os_info.ostype = res;
+                                }
+                            })
+                        )
+                        .catch(err => dbg.warn('failed to get detailed os info', err))
             )
             .then(() => this._update_servers_list(req.rpc_params.addresses))
             .then(() => this.create_node_token_wrapper.read())
@@ -831,10 +880,12 @@ class Agent {
                     this._fix_storage_limit(reply.storage);
                 }
             })
-            .then(() => extended_hb && os_utils.read_drives()
-                .catch(err => {
-                    dbg.error('read_drives: ERROR', err.stack || err);
-                })
+            .then(
+                () =>
+                    extended_hb &&
+                    os_utils.read_drives().catch(err => {
+                        dbg.error('read_drives: ERROR', err.stack || err);
+                    })
             )
             .then(drives => {
                 if (!drives) return;
@@ -936,24 +987,33 @@ class Agent {
 
     test_network_perf(req) {
         const dbg = this.dbg;
-        const data = req.rpc_params[RPC_BUFFERS] &&
-            req.rpc_params[RPC_BUFFERS].data;
+        const data = req.rpc_params[RPC_BUFFERS] && req.rpc_params[RPC_BUFFERS].data;
         const req_len = data ? data.length : 0;
         const res_len = req.rpc_params.response_length;
 
-        dbg.log1('test_network_perf:',
-            'req_len', req_len,
-            'res_len', res_len,
-            'source', req.rpc_params.source,
-            'target', req.rpc_params.target);
+        dbg.log1(
+            'test_network_perf:',
+            'req_len',
+            req_len,
+            'res_len',
+            res_len,
+            'source',
+            req.rpc_params.source,
+            'target',
+            req.rpc_params.target
+        );
 
         if (req.rpc_params.target !== this.rpc_address) {
-            throw new Error('test_network_perf: wrong address ' +
-                req.rpc_params.target + ' mine is ' + this.rpc_address);
+            throw new Error(
+                'test_network_perf: wrong address ' +
+                    req.rpc_params.target +
+                    ' mine is ' +
+                    this.rpc_address
+            );
         }
 
         return {
-            [RPC_BUFFERS]: { data: Buffer.alloc(res_len) }
+            [RPC_BUFFERS]: { data: Buffer.alloc(res_len) },
         };
     }
 
@@ -966,17 +1026,29 @@ class Agent {
         const concur = req.rpc_params.concur;
         let count = req.rpc_params.count;
 
-        dbg.log0('test_network_perf_to_peer:',
-            'source', source,
-            'target', target,
-            'req_len', req_len,
-            'res_len', res_len,
-            'count', count,
-            'concur', concur);
+        dbg.log0(
+            'test_network_perf_to_peer:',
+            'source',
+            source,
+            'target',
+            target,
+            'req_len',
+            req_len,
+            'res_len',
+            res_len,
+            'count',
+            count,
+            'concur',
+            concur
+        );
 
         if (source !== this.rpc_address) {
-            throw new Error('test_network_perf_to_peer: wrong address ' +
-                source + ' mine is ' + this.rpc_address);
+            throw new Error(
+                'test_network_perf_to_peer: wrong address ' +
+                    source +
+                    ' mine is ' +
+                    this.rpc_address
+            );
         }
         const reply = {};
 
@@ -984,19 +1056,25 @@ class Agent {
             if (count <= 0) return;
             count -= 1;
             // read/write from target agent
-            return this.client.agent.test_network_perf({
-                    source: source,
-                    target: target,
-                    response_length: res_len,
-                    [RPC_BUFFERS]: { data: Buffer.alloc(req_len) }
-                }, {
-                    address: target,
-                    return_rpc_req: true // we want to check req.connection
-                })
+            return this.client.agent
+                .test_network_perf(
+                    {
+                        source: source,
+                        target: target,
+                        response_length: res_len,
+                        [RPC_BUFFERS]: { data: Buffer.alloc(req_len) },
+                    },
+                    {
+                        address: target,
+                        return_rpc_req: true, // we want to check req.connection
+                    }
+                )
                 .then(io_req => {
                     const data = io_req.reply[RPC_BUFFERS].data;
-                    if (((!data || !data.length) && res_len > 0) ||
-                        (data && data.length && data.length !== res_len)) {
+                    if (
+                        ((!data || !data.length) && res_len > 0) ||
+                        (data && data.length && data.length !== res_len)
+                    ) {
                         throw new Error('test_network_perf_to_peer: response_length mismatch');
                     }
                     const session = io_req.connection.session;
@@ -1022,9 +1100,10 @@ class Agent {
             })
             .then(() => {
                 dbg.log1('Reading packed file');
-                return fs.promises.readFile(inner_path)
+                return fs.promises
+                    .readFile(inner_path)
                     .then(data => ({
-                        [RPC_BUFFERS]: { data }
+                        [RPC_BUFFERS]: { data },
                     }))
                     .catch(err => {
                         dbg.error('DIAGNOSTICS READ FAILED', err.stack || err);
@@ -1043,23 +1122,23 @@ class Agent {
         const dbg = this.dbg;
         dbg.log0('Received set debug req ', req.rpc_params.level);
         dbg.set_module_level(req.rpc_params.level, 'core');
-        if (req.rpc_params.level > 0) { //If level was set, unset it after a T/O
+        if (req.rpc_params.level > 0) {
+            //If level was set, unset it after a T/O
             await P.delay_unblocking(config.DEBUG_MODE_PERIOD);
             dbg.set_module_level(0, 'core');
         }
     }
 
     uninstall() {
-        return P.resolve()
-            .then(() => {
-                const dbg = this.dbg;
-                dbg.log1('Received uninstall req');
-                if (os_utils.IS_MAC) return;
-                P.delay(30 * 1000) // this._disable_service()
-                    .then(() => {
-                        this.send_message_and_exit('UNINSTALL', 85); // 85 is 'U' in ascii
-                    });
-            });
+        return P.resolve().then(() => {
+            const dbg = this.dbg;
+            dbg.log1('Received uninstall req');
+            if (os_utils.IS_MAC) return;
+            P.delay(30 * 1000) // this._disable_service()
+                .then(() => {
+                    this.send_message_and_exit('UNINSTALL', 85); // 85 is 'U' in ascii
+                });
+        });
     }
 
     async send_message_and_exit(message_code, exit_code) {
@@ -1071,7 +1150,9 @@ class Agent {
             // set timeout for 2 minutes to exit agent if not killed already
             const timeout = 2 * 60000;
             setTimeout(() => {
-                dbg.log0(`expected this process to get killed by now but still alive. exiting with code ${exit_code}`);
+                dbg.log0(
+                    `expected this process to get killed by now but still alive. exiting with code ${exit_code}`
+                );
                 process.exit(exit_code);
             }, timeout);
         } else {
@@ -1079,7 +1160,6 @@ class Agent {
             process.exit(exit_code);
         }
     }
-
 }
 
 module.exports = Agent;

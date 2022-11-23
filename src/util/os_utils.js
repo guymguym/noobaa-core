@@ -367,7 +367,7 @@ async function get_drive_of_path(file_path) {
     const volumes = await P.fromCallback(callback => node_df({ file: file_path }, callback));
     const vol = volumes && volumes[0];
     if (vol) {
-        const size_by_bd = await get_block_device_sizes();
+        const size_by_bd = []; //await get_block_device_sizes();
         return linux_volume_to_drive(vol, size_by_bd);
     }
 }

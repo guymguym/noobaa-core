@@ -1,3 +1,5 @@
+/* Copyright (C) 2020 NooBaa */
+'use strict';
 module.exports = {
 
     // prevent from looking up other config files in containing folders
@@ -100,7 +102,7 @@ module.exports = {
         // don't assign inside a condition, separate the lines for clarity
         'no-cond-assign': ['error', 'always'],
 
-        'no-confusing-arrow': ['error', { allowParens: true }],
+        'no-confusing-arrow': ['error', { allowParens: true, onlyOneSimpleParam: true }],
 
         // empty lines are mostly harmless
         'no-multiple-empty-lines': ['error', { max: 20 }],
@@ -118,7 +120,7 @@ module.exports = {
         'no-use-before-define': ['error', 'nofunc'],
 
         // break lines after operators, not before
-        'operator-linebreak': ['error', 'after'],
+        'operator-linebreak': 'off',
 
         // we prefer single var statement per variable
         'one-var': ['error', 'never'],
@@ -155,7 +157,7 @@ module.exports = {
         // to avoid shenanigans of the value returned before/after the action
         'no-plusplus': ['error', { allowForLoopAfterthoughts: true }],
 
-        'arrow-body-style': ['error', 'as-needed'],
+        'arrow-body-style': 'off',
 
         // prefer to use function deceleration (function foo() {})
         // instead of expression (foo = function() {})

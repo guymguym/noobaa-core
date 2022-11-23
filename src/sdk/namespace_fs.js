@@ -22,6 +22,8 @@ const Semaphore = require('../util/semaphore');
 const nb_native = require('../util/nb_native');
 const RpcError = require('../rpc/rpc_error');
 
+/** @typedef {fs.Stats & { xattr: object, mtimeNsBigint: bigint }} Stats  */
+
 const buffers_pool_sem = new Semaphore(config.NSFS_BUF_POOL_MEM_LIMIT, {
     timeout: config.IO_STREAM_SEMAPHORE_TIMEOUT,
     timeout_error_code: 'IO_STREAM_ITEM_TIMEOUT',
@@ -30,7 +32,7 @@ const buffers_pool_sem = new Semaphore(config.NSFS_BUF_POOL_MEM_LIMIT, {
 const buffers_pool = new buffer_utils.BuffersPool({
     buf_size: config.NSFS_BUF_SIZE,
     sem: buffers_pool_sem,
-    warning_timeout: config.NSFS_BUF_POOL_WARNING_TIMEOUT
+    warning_timeout: config.NSFS_BUF_POOL_WARNING_TIMEOUT,
 });
 
 const XATTR_USER_PREFIX = 'user.';
@@ -74,7 +76,7 @@ function isDirectory(ent) {
     if (!ent) throw new Error('isDirectory: ent is empty');
     if (ent.mode) {
         // eslint-disable-next-line no-bitwise
-        return (((ent.mode) & nb_native().fs.S_IFMT) === nb_native().fs.S_IFDIR);
+        return (ent.mode & nb_native().fs.S_IFMT) === nb_native().fs.S_IFDIR;
     } else if (ent.type) {
         return ent.type === nb_native().fs.DT_DIR;
     } else {
@@ -83,18 +85,20 @@ function isDirectory(ent) {
 }
 
 /**
- * 
+ *
  * @param {*} stat - entity stat yo check
  * @param {*} fs_context - account config using to check symbolic links
  * @param {*} entry_path - path of symbolic link
- * @returns 
+ * @returns
  */
 async function is_directory_or_symlink_to_directory(stat, fs_context, entry_path) {
     try {
         let r = isDirectory(stat);
         if (!r && is_symbolic_link(stat)) {
             let targetStat = await nb_native().fs.stat(fs_context, entry_path);
-            if (!targetStat) throw new Error('is_directory_or_symlink_to_directory: targetStat is empty');
+            if (!targetStat) {
+                throw new Error('is_directory_or_symlink_to_directory: targetStat is empty');
+            }
             r = isDirectory(targetStat);
         }
         return r;
@@ -109,7 +113,7 @@ function is_symbolic_link(stat) {
     if (!stat) throw new Error('isSymbolicLink: stat is empty');
     if (stat.mode) {
         // eslint-disable-next-line no-bitwise
-        return (((stat.mode) & nb_native().fs.S_IFMT) === nb_native().fs.S_IFLNK);
+        return (stat.mode & nb_native().fs.S_IFMT) === nb_native().fs.S_IFLNK;
     } else if (stat.type) {
         return stat.type === nb_native().fs.DT_LNK;
     } else {
@@ -130,7 +134,7 @@ function get_entry_name(e) {
 }
 
 /**
- * @param {string} name 
+ * @param {string} name
  * @returns {fs.Dirent}
  */
 function make_named_dirent(name) {
@@ -141,7 +145,7 @@ function make_named_dirent(name) {
 
 function to_xattr(fs_xattr) {
     const xattr = _.mapKeys(fs_xattr, (val, key) =>
-        (key.startsWith(XATTR_USER_PREFIX) ? key.slice(XATTR_USER_PREFIX.length) : '')
+        key.startsWith(XATTR_USER_PREFIX) ? key.slice(XATTR_USER_PREFIX.length) : ''
     );
     // keys which do not start with prefix will all map to the empty string key, so we remove it once
     delete xattr[''];
@@ -155,11 +159,10 @@ function to_fs_xattr(xattr) {
     return _.mapKeys(xattr, (val, key) => XATTR_USER_PREFIX + key);
 }
 
-
 /**
  * @typedef {{
  *  time: number,
- *  stat: fs.Stats,
+ *  stat: Stats,
  *  usage: number,
  *  sorted_entries?: fs.Dirent[],
  * }} ReaddirCacheItem
@@ -195,15 +198,14 @@ const dir_cache = new LRUCache({
  * @implements {nb.Namespace}
  */
 class NamespaceFS {
-
     /**
      * @param {{
      *  bucket_path: string;
      *  fs_backend?: string;
      *  bucket_id: string;
      *  namespace_resource_id?: string;
-     *  access_mode: string;
-     *  versioning: 'DISABLED' | 'SUSPENDED' | 'ENABLED';
+     *  access_mode?: string;
+     *  versioning?: 'DISABLED' | 'SUSPENDED' | 'ENABLED';
      * }} params
      */
     constructor({ bucket_path, fs_backend, bucket_id, namespace_resource_id, access_mode, versioning }) {
@@ -217,12 +219,14 @@ class NamespaceFS {
     }
 
     prepare_fs_context(object_sdk) {
-        const fs_context = object_sdk &&
-            object_sdk.requesting_account && object_sdk.requesting_account.nsfs_account_config;
+        const fs_context =
+            object_sdk &&
+            object_sdk.requesting_account &&
+            object_sdk.requesting_account.nsfs_account_config;
         if (!fs_context) {
-            const err = new Error('nsfs_account_config is missing');
-            err.rpc_code = 'UNAUTHORIZED';
-            throw err;
+            throw Object.assign(new Error('nsfs_account_config is missing'), {
+                rpc_code: 'UNAUTHORIZED',
+            });
         }
 
         fs_context.backend = this.fs_backend || '';
@@ -244,15 +248,26 @@ class NamespaceFS {
     }
 
     is_server_side_copy(other, params) {
-        const is_server_side_copy = other instanceof NamespaceFS &&
+        const is_server_side_copy =
+            other instanceof NamespaceFS &&
             other.bucket_path === this.bucket_path &&
             other.fs_backend === this.fs_backend && //Check that the same backend type
             params.xattr_copy; // TODO, DO we need to hard link at MetadataDirective 'REPLACE'?
         dbg.log2('NamespaceFS: is_server_side_copy:', is_server_side_copy);
-        dbg.log2('NamespaceFS: other instanceof NamespaceFS:', other instanceof NamespaceFS,
-            'other.bucket_path:', other.bucket_path, 'this.bucket_path:', this.bucket_path,
-            'other.fs_backend', other.fs_backend, 'this.fs_backend', this.fs_backend,
-            'params.xattr_copy', params.xattr_copy);
+        dbg.log2(
+            'NamespaceFS: other instanceof NamespaceFS:',
+            other instanceof NamespaceFS,
+            'other.bucket_path:',
+            other.bucket_path,
+            'this.bucket_path:',
+            this.bucket_path,
+            'other.fs_backend',
+            other.fs_backend,
+            'this.fs_backend',
+            this.fs_backend,
+            'params.xattr_copy',
+            params.xattr_copy
+        );
         return is_server_side_copy;
     }
 
@@ -294,19 +309,14 @@ class NamespaceFS {
      */
 
     /**
-     * @param {ListParams} params 
+     * @param {ListParams} params
      */
     async list_objects(params, object_sdk) {
         try {
             const fs_context = this.prepare_fs_context(object_sdk);
             await this._load_bucket(params, fs_context);
 
-            const {
-                bucket,
-                delimiter = '',
-                prefix = '',
-                key_marker = '',
-            } = params;
+            const { bucket, delimiter = '', prefix = '', key_marker = '' } = params;
 
             if (delimiter && delimiter !== '/') {
                 throw new Error('NamespaceFS: Invalid delimiter ' + delimiter);
@@ -316,7 +326,13 @@ class NamespaceFS {
             if (limit < 0) throw new Error('Limit must be a positive Integer');
             // In case that we've received max-keys 0, we should return an empty reply without is_truncated
             // This is used in order to follow aws spec and behaviour
-            if (!limit) return { is_truncated: false, objects: [], common_prefixes: [] };
+            if (!limit) {
+                return {
+                    is_truncated: false,
+                    objects: [],
+                    common_prefixes: [],
+                };
+            }
 
             let is_truncated = false;
 
@@ -324,7 +340,7 @@ class NamespaceFS {
              * @typedef {{
              *  key: string,
              *  common_prefix: boolean,
-             *  stat?: fs.Stats,
+             *  stat?: Stats,
              * }} Result
              */
 
@@ -336,7 +352,6 @@ class NamespaceFS {
              * @returns {Promise<void>}
              */
             const process_dir = async dir_key => {
-
                 // /** @type {fs.Dir} */
                 let dir_handle;
 
@@ -361,7 +376,7 @@ class NamespaceFS {
                 }
                 // when the dir portion of the marker is completely below the current dir
                 // then every key in this dir satisfies the marker and marker_ent should not be used.
-                const marker_curr = (marker_dir < dir_key) ? '' : marker_ent;
+                const marker_curr = marker_dir < dir_key ? '' : marker_ent;
 
                 // dbg.log0(`process_dir: dir_key=${dir_key} prefix_ent=${prefix_ent} marker_curr=${marker_curr}`);
 
@@ -369,16 +384,21 @@ class NamespaceFS {
                  * @param {fs.Dirent} ent
                  */
                 const process_entry = async ent => {
-
                     // dbg.log0('process_entry', dir_key, ent.name);
 
-                    if (!ent.name.startsWith(prefix_ent) ||
+                    if (
+                        !ent.name.startsWith(prefix_ent) ||
                         ent.name < marker_curr ||
-                        ent.name === this.get_bucket_tmpdir()) {
+                        ent.name === this.get_bucket_tmpdir()
+                    ) {
                         return;
                     }
 
-                    const isDir = await is_directory_or_symlink_to_directory(ent, fs_context, path.join(dir_path, ent.name));
+                    const isDir = await is_directory_or_symlink_to_directory(
+                        ent,
+                        fs_context,
+                        path.join(dir_path, ent.name)
+                    );
 
                     const r = {
                         key: this._get_entry_key(dir_key, ent, isDir),
@@ -415,7 +435,10 @@ class NamespaceFS {
                 if (!(await this.check_access(fs_context, dir_path))) return;
 
                 try {
-                    cached_dir = await dir_cache.get_with_cache({ dir_path, fs_context });
+                    cached_dir = await dir_cache.get_with_cache({
+                        dir_path,
+                        fs_context,
+                    });
                 } catch (err) {
                     if (err.code === 'ENOENT') {
                         dbg.log0('NamespaceFS: no keys for non existing dir', dir_path);
@@ -440,7 +463,10 @@ class NamespaceFS {
                         if (marker_curr.startsWith(prev_dir_name) && dir_key !== prev_dir.name) {
                             if (!delimiter) {
                                 const isDir = await is_directory_or_symlink_to_directory(
-                                    prev_dir, fs_context, path.join(dir_path, prev_dir_name));
+                                    prev_dir,
+                                    fs_context,
+                                    path.join(dir_path, prev_dir_name)
+                                );
                                 if (isDir) {
                                     await process_dir(path.join(dir_key, prev_dir_name));
                                 }
@@ -449,7 +475,7 @@ class NamespaceFS {
                     }
                     for (let i = marker_index; i < sorted_entries.length; ++i) {
                         const ent = sorted_entries[i];
-                        // when entry is NSFS_FOLDER_OBJECT_NAME=.folder file, 
+                        // when entry is NSFS_FOLDER_OBJECT_NAME=.folder file,
                         // and the dir key marker is the name of the curr directory - skip on adding it
                         if (ent.name === config.NSFS_FOLDER_OBJECT_NAME && dir_key === marker_dir) {
                             continue;
@@ -465,7 +491,12 @@ class NamespaceFS {
                 // for large dirs we cannot keep all entries in memory
                 // so we have to stream the entries one by one while filtering only the needed ones.
                 try {
-                    dbg.warn('NamespaceFS: open dir streaming', dir_path, 'size', cached_dir.stat.size);
+                    dbg.warn(
+                        'NamespaceFS: open dir streaming',
+                        dir_path,
+                        'size',
+                        cached_dir.stat.size
+                    );
                     dir_handle = await nb_native().fs.opendir(fs_context, dir_path); //, { bufferSize: 128 });
                     for (;;) {
                         const dir_entry = await dir_handle.read(fs_context);
@@ -479,7 +510,12 @@ class NamespaceFS {
                 } finally {
                     if (dir_handle) {
                         try {
-                            dbg.warn('NamespaceFS: close dir streaming', dir_path, 'size', cached_dir.stat.size);
+                            dbg.warn(
+                                'NamespaceFS: close dir streaming',
+                                dir_path,
+                                'size',
+                                cached_dir.stat.size
+                            );
                             await dir_handle.close(fs_context);
                         } catch (err) {
                             dbg.error('NamespaceFS: close dir failed', err);
@@ -491,13 +527,20 @@ class NamespaceFS {
 
             const prefix_dir_key = prefix.slice(0, prefix.lastIndexOf('/') + 1);
             await process_dir(prefix_dir_key);
-            await Promise.all(results.map(async r => {
-                if (r.common_prefix) return;
-                const entry_path = path.join(this.bucket_path, r.key);
-                //If entry is outside of bucket, returns stat of symbolic link
-                const use_lstat = !(await this._is_path_in_bucket_boundaries(fs_context, entry_path));
-                r.stat = await nb_native().fs.stat(fs_context, entry_path, { use_lstat });
-            }));
+            await Promise.all(
+                results.map(async r => {
+                    if (r.common_prefix) return;
+                    const entry_path = path.join(this.bucket_path, r.key);
+                    //If entry is outside of bucket, returns stat of symbolic link
+                    const use_lstat = !(await this._is_path_in_bucket_boundaries(
+                        fs_context,
+                        entry_path
+                    ));
+                    r.stat = await nb_native().fs.stat(fs_context, entry_path, {
+                        use_lstat,
+                    });
+                })
+            );
             const res = {
                 objects: [],
                 common_prefixes: [],
@@ -586,10 +629,14 @@ class NamespaceFS {
             let log2_size_histogram = {};
             let drain_promise = null;
 
-            dbg.log0('NamespaceFS: read_object_stream', { file_path, start, end });
+            dbg.log0('NamespaceFS: read_object_stream', {
+                file_path,
+                start,
+                end,
+            });
 
             let count = 1;
-            for (let pos = start; pos < end;) {
+            for (let pos = start; pos < end; undefined) {
                 object_sdk.throw_if_aborted();
 
                 // allocate or reuse buffer
@@ -603,15 +650,15 @@ class NamespaceFS {
                 const remain_size = Math.max(0, end - pos);
                 const read_size = Math.min(buffer.length, remain_size);
 
-                //TODO: We probably have an issue with counting the bytes in the read 
+                //TODO: We probably have an issue with counting the bytes in the read
                 // We need to find it and fix
 
-                // Update the read stats               
+                // Update the read stats
                 stats_collector.instance(object_sdk.rpc_client).update_nsfs_read_stats({
                     namespace_resource_id: this.namespace_resource_id,
                     bucket_name: params.bucket,
                     size: read_size,
-                    count
+                    count,
                 });
                 // clear count for next updates
                 count = 0;
@@ -632,7 +679,7 @@ class NamespaceFS {
                 const log2_size = Math.ceil(Math.log2(bytesRead));
                 log2_size_histogram[log2_size] = (log2_size_histogram[log2_size] || 0) + 1;
 
-                // wait for response buffer to drain before adding more data if needed - 
+                // wait for response buffer to drain before adding more data if needed -
                 // this occurs when the output network is slower than the input file
                 if (drain_promise) {
                     await drain_promise;
@@ -644,7 +691,9 @@ class NamespaceFS {
                 buffer_pool_cleanup = null; // cleanup is now in the socket responsibility
                 const write_ok = res.write(data, null, callback);
                 if (!write_ok) {
-                    drain_promise = stream_utils.wait_drain(res, { signal: object_sdk.abort_controller.signal });
+                    drain_promise = stream_utils.wait_drain(res, {
+                        signal: object_sdk.abort_controller.signal,
+                    });
                     drain_promise.catch(() => undefined); // this avoids UnhandledPromiseRejection
                 }
             }
@@ -663,7 +712,9 @@ class NamespaceFS {
             // end the stream
             res.end();
 
-            await stream_utils.wait_finished(res, { signal: object_sdk.abort_controller.signal });
+            await stream_utils.wait_finished(res, {
+                signal: object_sdk.abort_controller.signal,
+            });
             object_sdk.throw_if_aborted();
 
             dbg.log0('NamespaceFS: read_object_stream completed file', file_path, {
@@ -675,11 +726,9 @@ class NamespaceFS {
 
             // return null to signal the caller that we already handled the response
             return null;
-
         } catch (err) {
             dbg.log0('NamespaceFS: read_object_stream error file', file_path, err);
             throw this._translate_object_error_codes(err);
-
         } finally {
             try {
                 if (file) {
@@ -692,7 +741,10 @@ class NamespaceFS {
             try {
                 // release buffer back to pool if needed
                 if (buffer_pool_cleanup) {
-                    dbg.log0('NamespaceFS: read_object_stream finally buffer_pool_cleanup', file_path);
+                    dbg.log0(
+                        'NamespaceFS: read_object_stream finally buffer_pool_cleanup',
+                        file_path
+                    );
                     buffer_pool_cleanup();
                 }
             } catch (err) {
@@ -700,7 +752,6 @@ class NamespaceFS {
             }
         }
     }
-
 
     ///////////////////
     // OBJECT UPLOAD //
@@ -955,14 +1006,17 @@ class NamespaceFS {
                 if (retries <= 0) throw err;
                 if (err.code !== 'ENOENT') throw err;
                 // checking that the source_path still exists
-                if (!await this.check_access(fs_context, source_path)) throw err;
-                dbg.warn(`NamespaceFS: Retrying failed move to dest retries=${retries}` +
-                    ` source_path=${source_path} dest_path=${dest_path}`, err);
+                if (!(await this.check_access(fs_context, source_path))) throw err;
+                dbg.warn(
+                    `NamespaceFS: Retrying failed move to dest retries=${retries}` +
+                        ` source_path=${source_path} dest_path=${dest_path}`,
+                    err
+                );
             }
         }
     }
 
-    // Comparing both device and inode number (st_dev and st_ino returned by stat) 
+    // Comparing both device and inode number (st_dev and st_ino returned by stat)
     // will tell you whether two different file names refer to the same thing.
     // If so, we will return the etag and encryption info of the file_path
     async _is_same_inode(fs_context, source_file_path, file_path) {
@@ -971,11 +1025,21 @@ class NamespaceFS {
             const file_path_stat = await nb_native().fs.stat(fs_context, file_path);
             const file_path_inode = file_path_stat.ino.toString();
             const file_path_device = file_path_stat.dev.toString();
-            const source_file_stat = await nb_native().fs.stat(fs_context, source_file_path, { skip_user_xattr: true });
+            const source_file_stat = await nb_native().fs.stat(fs_context, source_file_path, {
+                skip_user_xattr: true,
+            });
             const source_file_inode = source_file_stat.ino.toString();
             const source_file_device = source_file_stat.dev.toString();
-            dbg.log2('NamespaceFS: file_path_inode:', file_path_inode, 'source_file_inode:', source_file_inode,
-                'file_path_device:', file_path_device, 'source_file_device:', source_file_device);
+            dbg.log2(
+                'NamespaceFS: file_path_inode:',
+                file_path_inode,
+                'source_file_inode:',
+                source_file_inode,
+                'file_path_device:',
+                file_path_device,
+                'source_file_device:',
+                source_file_device
+            );
             if (file_path_inode === source_file_inode && file_path_device === source_file_device) {
                 return file_path_stat;
             }
@@ -999,7 +1063,9 @@ class NamespaceFS {
                 rpc_client: object_sdk.rpc_client,
                 namespace_resource_id: this.namespace_resource_id
             });
-            chunk_fs.on('error', err1 => dbg.error('namespace_fs._upload_stream: error occured on stream ChunkFS: ', err1));
+            chunk_fs.on('error', err1 =>
+                dbg.error('namespace_fs._upload_stream: error occured on stream ChunkFS: ', err1)
+            );
             await stream_utils.pipeline([source_stream, chunk_fs]);
             await stream_utils.wait_finished(chunk_fs);
             return chunk_fs.digest;
@@ -1008,7 +1074,6 @@ class NamespaceFS {
             throw error;
         }
     }
-
 
     //////////////////////
     // MULTIPART UPLOAD //
@@ -1032,7 +1097,10 @@ class NamespaceFS {
             params.obj_id = uuidv4();
             params.mpu_path = this._mpu_path(params);
             await this._create_path(params.mpu_path, fs_context);
-            const create_params = JSON.stringify({ ...params, source_stream: null });
+            const create_params = JSON.stringify({
+                ...params,
+                source_stream: null,
+            });
             await nb_native().fs.writeFile(
                 fs_context,
                 path.join(params.mpu_path, 'create_object_upload'),
@@ -1082,18 +1150,18 @@ class NamespaceFS {
             const entries = await nb_native().fs.readdir(fs_context, params.mpu_path);
             const multiparts = await Promise.all(
                 entries
-                .filter(e => e.name.startsWith('part-'))
-                .map(async e => {
-                    const num = Number(e.name.slice('part-'.length));
-                    const part_path = path.join(params.mpu_path, e.name);
-                    const stat = await nb_native().fs.stat(fs_context, part_path);
-                    return {
-                        num,
-                        size: stat.size,
-                        etag: this._get_etag(stat),
-                        last_modified: new Date(stat.mtime),
-                    };
-                })
+                    .filter(e => e.name.startsWith('part-'))
+                    .map(async e => {
+                        const num = Number(e.name.slice('part-'.length));
+                        const part_path = path.join(params.mpu_path, e.name);
+                        const stat = await nb_native().fs.stat(fs_context, part_path);
+                        return {
+                            num,
+                            size: stat.size,
+                            etag: this._get_etag(stat),
+                            last_modified: new Date(stat.mtime),
+                        };
+                    })
             );
             return {
                 is_truncated: false,
@@ -1112,7 +1180,9 @@ class NamespaceFS {
         const fs_context = this.prepare_fs_context(object_sdk);
         const open_mode = 'w';
         try {
-            let MD5Async = config.NSFS_CALCULATE_MD5 ? new (nb_native().crypto.MD5Async)() : undefined;
+            let MD5Async = config.NSFS_CALCULATE_MD5
+                ? new (nb_native().crypto.MD5Async)()
+                : undefined;
             const { multiparts = [] } = params;
             multiparts.sort((a, b) => a.num - b.num);
             await this._load_multipart(params, fs_context);
@@ -1126,13 +1196,28 @@ class NamespaceFS {
                 const part_stat = await nb_native().fs.stat(fs_context, part_path);
                 read_file = await this._open_file(fs_context, part_path, undefined);
                 if (etag !== this._get_etag(part_stat)) {
-                    throw new Error('mismatch part etag: ' + util.inspect({ num, etag, part_path, part_stat, params }));
+                    throw new Error(
+                        'mismatch part etag: ' +
+                            util.inspect({
+                                num,
+                                etag,
+                                part_path,
+                                part_stat,
+                                params,
+                            })
+                    );
                 }
                 let read_pos = 0;
                 for (;;) {
                     const { buffer, callback } = await buffers_pool.get_buffer();
                     buffer_pool_cleanup = callback;
-                    const bytesRead = await read_file.read(fs_context, buffer, 0, config.NSFS_BUF_SIZE, read_pos);
+                    const bytesRead = await read_file.read(
+                        fs_context,
+                        buffer,
+                        0,
+                        config.NSFS_BUF_SIZE,
+                        read_pos
+                    );
                     if (!bytesRead) {
                         buffer_pool_cleanup = null;
                         callback();
@@ -1331,7 +1416,7 @@ class NamespaceFS {
     _assign_md5_to_fs_xattr(md5_digest, fs_xattr) {
         // TODO: Assign content_md5_mtime
         fs_xattr = Object.assign(fs_xattr || {}, {
-            [XATTR_MD5_KEY]: md5_digest
+            [XATTR_MD5_KEY]: md5_digest,
         });
         return fs_xattr;
     }
@@ -1350,7 +1435,12 @@ class NamespaceFS {
     async _get_fs_xattr_from_path(fs_context, file_path) {
         let file;
         try {
-            file = await nb_native().fs.open(fs_context, file_path, undefined, get_umasked_mode(config.BASE_MODE_FILE));
+            file = await nb_native().fs.open(
+                fs_context,
+                file_path,
+                undefined,
+                get_umasked_mode(config.BASE_MODE_FILE)
+            );
             const fs_xattr = await file.getxattr(fs_context);
             await file.close(fs_context);
             file = null;
@@ -1363,9 +1453,9 @@ class NamespaceFS {
     }
 
     /**
-     * @param {string} dir_key 
-     * @param {fs.Dirent} ent 
-     * @returns {string} 
+     * @param {string} dir_key
+     * @param {fs.Dirent} ent
+     * @returns {string}
      */
     _get_entry_key(dir_key, ent, isDir) {
         if (ent.name === config.NSFS_FOLDER_OBJECT_NAME) return dir_key;
@@ -1374,10 +1464,13 @@ class NamespaceFS {
 
     async _make_path_dirs(file_path, fs_context) {
         const last_dir_pos = file_path.lastIndexOf('/');
-        if (last_dir_pos > 0) return this._create_path(file_path.slice(0, last_dir_pos), fs_context);
+        if (last_dir_pos > 0) {
+            return this._create_path(file_path.slice(0, last_dir_pos), fs_context);
+        }
     }
 
     /**
+     * @param {Stats} stat
      * @returns {string}
      */
     _get_etag(stat) {
@@ -1399,8 +1492,8 @@ class NamespaceFS {
     }
 
     /**
-     * @param {string} bucket 
-     * @param {string} key 
+     * @param {string} bucket
+     * @param {string} key
      * @returns {nb.ObjectInfo}
      */
     _get_object_info(bucket, key, stat, return_version_id) {
@@ -1443,21 +1536,27 @@ class NamespaceFS {
 
     _get_encryption_info(stat) {
         // Currently encryption is supported only on top of GPFS, otherwise we will return undefined
-        return stat.xattr['gpfs.Encryption'] ? {
-            algorithm: 'AES256',
-            kms_key_id: '',
-            context_b64: '',
-            key_md5_b64: '',
-            key_b64: '',
-        } : undefined;
+        return stat.xattr['gpfs.Encryption']
+            ? {
+                  algorithm: 'AES256',
+                  kms_key_id: '',
+                  context_b64: '',
+                  key_md5_b64: '',
+                  key_b64: '',
+              }
+            : undefined;
     }
 
     // This function verifies the user didn't ask for SSE-S3 Encryption, when Encryption is not supported by the FS
     _verify_encryption(user_encryption, fs_encryption) {
         if (user_encryption && user_encryption.algorithm === 'AES256' && !fs_encryption) {
-            dbg.error('upload_object: User requested encryption but encryption not supported for FS');
-            throw new RpcError('SERVER_SIDE_ENCRYPTION_CONFIGURATION_NOT_FOUND_ERROR',
-                'Encryption not supported by the FileSystem');
+            dbg.error(
+                'upload_object: User requested encryption but encryption not supported for FS'
+            );
+            throw new RpcError(
+                'SERVER_SIDE_ENCRYPTION_CONFIGURATION_NOT_FOUND_ERROR',
+                'Encryption not supported by the FileSystem'
+            );
         }
     }
 
@@ -1505,7 +1604,11 @@ class NamespaceFS {
         for (const item of dir.split(path.sep)) {
             dir_path = path.join(dir_path, item);
             try {
-                await nb_native().fs.mkdir(fs_context, dir_path, get_umasked_mode(config.BASE_MODE_DIR));
+                await nb_native().fs.mkdir(
+                    fs_context,
+                    dir_path,
+                    get_umasked_mode(config.BASE_MODE_DIR)
+                );
             } catch (err) {
                 const ERR_CODES = ['EISDIR', 'EEXIST'];
                 if (!ERR_CODES.includes(err.code)) throw err;
@@ -1522,7 +1625,8 @@ class NamespaceFS {
                 dir = path.dirname(dir);
             }
         } catch (err) {
-            if (err.code !== 'ENOTEMPTY' &&
+            if (
+                err.code !== 'ENOTEMPTY' &&
                 err.code !== 'ENOENT' &&
                 err.code !== 'ENOTDIR' &&
                 err.code !== 'EACCES'
@@ -1534,12 +1638,15 @@ class NamespaceFS {
 
     async _folder_delete(dir, fs_context) {
         let entries = await nb_native().fs.readdir(fs_context, dir);
-        let results = await Promise.all(entries.map(entry => {
-            let fullPath = path.join(dir, entry.name);
-            let task = isDirectory(entry) ? this._folder_delete(fullPath, fs_context) :
-                nb_native().fs.unlink(fs_context, fullPath);
-            return task.catch(error => ({ error }));
-        }));
+        let results = await Promise.all(
+            entries.map(entry => {
+                let fullPath = path.join(dir, entry.name);
+                let task = isDirectory(entry)
+                    ? this._folder_delete(fullPath, fs_context)
+                    : nb_native().fs.unlink(fs_context, fullPath);
+                return task.catch(error => ({ error }));
+            })
+        );
         results.forEach(result => {
             // Ignore missing files/directories; bail on other errors
             if (result && result.error && result.error.code !== 'ENOENT') throw result.error;
@@ -1549,7 +1656,12 @@ class NamespaceFS {
 
     async create_uls(params, object_sdk) {
         const fs_context = this.prepare_fs_context(object_sdk);
-        dbg.log0('NamespaceFS: create_uls fs_context:', fs_context, 'new_dir_path: ', params.full_path);
+        dbg.log0(
+            'NamespaceFS: create_uls fs_context:',
+            fs_context,
+            'new_dir_path: ',
+            params.full_path
+        );
         try {
             await nb_native().fs.mkdir(fs_context, params.full_path, get_umasked_mode(0o777));
         } catch (err) {
@@ -1559,15 +1671,20 @@ class NamespaceFS {
 
     async delete_uls(params, object_sdk) {
         const fs_context = this.prepare_fs_context(object_sdk);
-        dbg.log0('NamespaceFS: delete_uls fs_context:', fs_context, 'to_delete_dir_path: ', params.full_path);
+        dbg.log0(
+            'NamespaceFS: delete_uls fs_context:',
+            fs_context,
+            'to_delete_dir_path: ',
+            params.full_path
+        );
 
         try {
             const list = await this.list_objects({ ...params, limit: 1 }, object_sdk);
 
             if (list && list.objects && list.objects.length > 0) {
-                const err = new Error('underlying directory has files in it');
-                err.rpc_code = 'NOT_EMPTY';
-                throw err;
+                throw Object.assign(new Error('underlying directory has files in it'), {
+                    rpc_code: 'NOT_EMPTY',
+                });
             }
 
             await this._folder_delete(params.full_path, fs_context);
@@ -1586,7 +1703,7 @@ class NamespaceFS {
             dbg.error('check_access: error ', err.code, err, dir_path, this.bucket_path);
             const is_bucket_dir = dir_path === this.bucket_path;
 
-            // if dir_path is the bucket path we would like to throw an error 
+            // if dir_path is the bucket path we would like to throw an error
             // for other dirs we will skip
             if (['EPERM', 'EACCES'].includes(err.code) && !is_bucket_dir) {
                 return false;
@@ -1602,22 +1719,34 @@ class NamespaceFS {
 
     /**
      * Return false if the entry is outside of the bucket
-     * @param {*} fs_context 
-     * @param {*} entry_path 
-     * @returns 
+     * @param {*} fs_context
+     * @param {*} entry_path
+     * @returns
      */
     async _is_path_in_bucket_boundaries(fs_context, entry_path) {
         dbg.log0('check_bucket_boundaries: fs_context', fs_context, 'file_path', entry_path);
         if (!entry_path.startsWith(this.bucket_path)) {
-            dbg.log0('check_bucket_boundaries: the path', entry_path, 'is not in the bucket', this.bucket_path, 'boundaries');
+            dbg.log0(
+                'check_bucket_boundaries: the path',
+                entry_path,
+                'is not in the bucket',
+                this.bucket_path,
+                'boundaries'
+            );
             return false;
         }
         try {
             // Returns the real path of the entry.
-            // The entry path may point to regular file or directory, but can have symbolic links  
+            // The entry path may point to regular file or directory, but can have symbolic links
             let full_path = await nb_native().fs.realpath(fs_context, entry_path);
             if (!full_path.startsWith(this.bucket_path)) {
-                dbg.log0('check_bucket_boundaries: the path', entry_path, 'is not in the bucket', this.bucket_path, 'boundaries');
+                dbg.log0(
+                    'check_bucket_boundaries: the path',
+                    entry_path,
+                    'is not in the bucket',
+                    this.bucket_path,
+                    'boundaries'
+                );
                 return false;
             }
         } catch (err) {
@@ -1630,19 +1759,26 @@ class NamespaceFS {
             if (err.code === 'EACCES') {
                 return false;
             }
-            throw Object.assign(new Error('check_bucket_boundaries error ' + err.code + " " + entry_path + " " + err), { code: 'INTERNAL_ERROR' });
+            throw Object.assign(
+                new Error(
+                    'check_bucket_boundaries error ' + err.code + ' ' + entry_path + ' ' + err
+                ),
+                { code: 'INTERNAL_ERROR' }
+            );
         }
         return true;
     }
 
     /**
-     * throws AccessDenied, if the entry is outside of the bucket 
-     * @param {*} fs_context 
-     * @param {*} entry_path 
+     * throws AccessDenied, if the entry is outside of the bucket
+     * @param {*} fs_context
+     * @param {*} entry_path
      */
     async _check_path_in_bucket_boundaries(fs_context, entry_path) {
         if (!(await this._is_path_in_bucket_boundaries(fs_context, entry_path))) {
-            throw Object.assign(new Error('Entry ' + entry_path + ' is not in bucket boundaries'), { code: 'EACCES' });
+            throw Object.assign(new Error('Entry ' + entry_path + ' is not in bucket boundaries'), {
+                code: 'EACCES',
+            });
         }
     }
 
@@ -1672,6 +1808,10 @@ class NamespaceFS {
         return this.versioning === versioning_status_enum.VER_DISABLED;
     }
 
+    /**
+     * @param {Stats} stat
+     * @returns {string}
+     */
     _get_version_id_by_stat({ino, mtimeNsBigint}) {
         // TODO: GPFS might require generation number to be added to version_id
         return 'mtime-' + mtimeNsBigint.toString(36) + '-ino-' + ino.toString(36);

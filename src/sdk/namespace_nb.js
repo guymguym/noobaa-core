@@ -8,9 +8,7 @@ const blob_translator = require('./blob_translator');
 const s3_utils = require('../endpoint/s3/s3_utils');
 const S3Error = require('../endpoint/s3/s3_errors').S3Error;
 
-const EXCEPT_REASONS = [
-    'NO_SUCH_OBJECT'
-];
+const EXCEPT_REASONS = ['NO_SUCH_OBJECT'];
 
 const object_id_regex = /^[0-9a-fA-F]{24}$/;
 
@@ -18,11 +16,10 @@ const object_id_regex = /^[0-9a-fA-F]{24}$/;
  * NamespaceNB maps objects using the noobaa bucket_api and object_api
  * and calls object_io to perform dedup, compression, encryption,
  * and placement of blocks in sotorage resources (backing stores / pools).
- * 
+ *
  * @implements {nb.Namespace}
  */
 class NamespaceNB {
-
     constructor(target_bucket) {
         // Notice: This is not relevant since we do not use NOOBAA namespace
         this.target_bucket = target_bucket;
@@ -88,28 +85,39 @@ class NamespaceNB {
     async read_object_stream(params, object_sdk) {
         const operation = 'ObjectRead';
         let obj = { key: params.key };
-        params = _.defaults({
-            client: object_sdk.rpc_client,
-            bucket: this.target_bucket,
-        }, params);
+        params = _.defaults(
+            {
+                client: object_sdk.rpc_client,
+                bucket: this.target_bucket,
+            },
+            params
+        );
         // Noobaa bucket does not currrently support partNumber query parameter. Ignore it for now.
         // If set, part_number is positive integer from 1 to 10000
         if (params.part_number) _.unset(params, 'part_number');
         const active_triggers = this.get_triggers_for_bucket(params.bucket);
-        const load_for_trigger = !params.noobaa_trigger_agent && object_sdk.should_run_triggers({
-            active_triggers,
-            operation
-        });
+        const load_for_trigger =
+            !params.noobaa_trigger_agent &&
+            object_sdk.should_run_triggers({
+                active_triggers,
+                operation,
+            });
         params = _.omit(params, 'noobaa_trigger_agent');
         if (params.object_md) {
             obj = _.defaults(obj, params.object_md);
         } else {
-            obj = load_for_trigger && _.defaults(obj, await this.read_object_md(params, object_sdk));
+            obj =
+                load_for_trigger && _.defaults(obj, await this.read_object_md(params, object_sdk));
         }
         const reply = object_sdk.object_io.read_object_stream(params);
         // Notice: We dispatch the trigger prior to the finish of the read
         if (load_for_trigger) {
-            object_sdk.dispatch_triggers({ active_triggers, operation, obj, bucket: params.bucket });
+            object_sdk.dispatch_triggers({
+                active_triggers,
+                operation,
+                obj,
+                bucket: params.bucket,
+            });
         }
         return reply;
     }
@@ -120,14 +128,17 @@ class NamespaceNB {
 
     async upload_object(params, object_sdk) {
         const operation = 'ObjectCreated';
-        params = _.defaults({
-            client: object_sdk.rpc_client,
-            bucket: this.target_bucket,
-        }, params);
+        params = _.defaults(
+            {
+                client: object_sdk.rpc_client,
+                bucket: this.target_bucket,
+            },
+            params
+        );
         const active_triggers = this.get_triggers_for_bucket(params.bucket);
         const load_for_trigger = object_sdk.should_run_triggers({
             active_triggers,
-            operation
+            operation,
         });
         const reply = await object_sdk.object_io.upload_object(params);
         if (load_for_trigger) {
@@ -136,9 +147,14 @@ class NamespaceNB {
                 key: params.key,
                 size: params.size,
                 content_type: params.content_type,
-                etag: reply.etag
+                etag: reply.etag,
             };
-            object_sdk.dispatch_triggers({ active_triggers, operation, obj, bucket: params.bucket });
+            object_sdk.dispatch_triggers({
+                active_triggers,
+                operation,
+                obj,
+                bucket: params.bucket,
+            });
         }
         return reply;
     }
@@ -169,10 +185,13 @@ class NamespaceNB {
     }
 
     upload_multipart(params, object_sdk) {
-        params = _.defaults({
-            client: object_sdk.rpc_client,
-            bucket: this.target_bucket,
-        }, params);
+        params = _.defaults(
+            {
+                client: object_sdk.rpc_client,
+                bucket: this.target_bucket,
+            },
+            params
+        );
         return object_sdk.object_io.upload_multipart(params);
     }
 
@@ -187,7 +206,7 @@ class NamespaceNB {
         const active_triggers = this.get_triggers_for_bucket(params.bucket);
         const load_for_trigger = object_sdk.should_run_triggers({
             active_triggers,
-            operation
+            operation,
         });
         const reply = await object_sdk.rpc_client.object.complete_object_upload(params);
         if (load_for_trigger) {
@@ -196,9 +215,14 @@ class NamespaceNB {
                 key: params.key,
                 size: reply.size,
                 content_type: reply.content_type,
-                etag: reply.etag
+                etag: reply.etag,
             };
-            object_sdk.dispatch_triggers({ active_triggers, operation, obj, bucket: params.bucket });
+            object_sdk.dispatch_triggers({
+                active_triggers,
+                operation,
+                obj,
+                bucket: params.bucket,
+            });
         }
         return reply;
     }
@@ -220,18 +244,25 @@ class NamespaceNB {
         const active_triggers = this.get_triggers_for_bucket(params.bucket);
         const load_for_trigger = object_sdk.should_run_triggers({
             active_triggers,
-            operation
+            operation,
         });
         let obj;
         try {
-            obj = load_for_trigger && _.defaults({ key: params.key }, await this.read_object_md(params, object_sdk));
+            obj =
+                load_for_trigger &&
+                _.defaults({ key: params.key }, await this.read_object_md(params, object_sdk));
         } catch (error) {
             if (!_.includes(EXCEPT_REASONS, error.rpc_code || 'UNKNOWN_ERR')) throw error;
         }
         const reply = await object_sdk.rpc_client.object.delete_object(params);
         // TODO: What should I send to the trigger on non existing objects delete?
         if (load_for_trigger && obj) {
-            object_sdk.dispatch_triggers({ active_triggers, operation, obj, bucket: params.bucket });
+            object_sdk.dispatch_triggers({
+                active_triggers,
+                operation,
+                obj,
+                bucket: params.bucket,
+            });
         }
         return reply;
     }
@@ -242,25 +273,30 @@ class NamespaceNB {
         const active_triggers = this.get_triggers_for_bucket(params.bucket);
         const load_for_trigger = object_sdk.should_run_triggers({
             active_triggers,
-            operation
+            operation,
         });
         // TODO: What should I do instead of failing on one failed head request?
         // I cannot exclude the files that failed from delete since it will be considered altering the request of the client
         // TODO: Notice that we do not handle the md_conditions for the heads
-        const head_res = load_for_trigger && await P.map(params.objects, async obj => {
-            const request = {
-                bucket: params.bucket,
-                key: obj.key,
-                version_id: obj.version_id
-            };
-            let obj_md;
-            try {
-                obj_md = _.defaults({ key: obj.key }, await this.read_object_md(request, object_sdk));
-            } catch (error) {
-                if (!_.includes(EXCEPT_REASONS, error.rpc_code || 'UNKNOWN_ERR')) throw error;
-            }
-            return obj_md;
-        });
+        const head_res =
+            load_for_trigger &&
+            (await P.map(params.objects, async obj => {
+                const request = {
+                    bucket: params.bucket,
+                    key: obj.key,
+                    version_id: obj.version_id,
+                };
+                let obj_md;
+                try {
+                    obj_md = _.defaults(
+                        { key: obj.key },
+                        await this.read_object_md(request, object_sdk)
+                    );
+                } catch (error) {
+                    if (!_.includes(EXCEPT_REASONS, error.rpc_code || 'UNKNOWN_ERR')) throw error;
+                }
+                return obj_md;
+            }));
         const deleted_res = await object_sdk.rpc_client.object.delete_multiple_objects(params);
         if (load_for_trigger) {
             this._dispatch_multiple_delete_triggers({
@@ -269,7 +305,7 @@ class NamespaceNB {
                 object_sdk,
                 operation,
                 bucket: params.bucket,
-                active_triggers
+                active_triggers,
             });
         }
         return deleted_res;
@@ -332,24 +368,30 @@ class NamespaceNB {
     ////////////
 
     async get_object_acl(params, object_sdk) {
-        await this.read_object_md({
-            bucket: params.bucket,
-            key: params.key,
-            version_id: params.versionId
-        }, object_sdk);
+        await this.read_object_md(
+            {
+                bucket: params.bucket,
+                key: params.key,
+                version_id: params.versionId,
+            },
+            object_sdk
+        );
 
         return s3_utils.DEFAULT_OBJECT_ACL;
     }
 
     async put_object_acl(params, object_sdk) {
         // TODO S3 ignoring put_object_acl for now
-        // For now we just call read_object_md() to check if the object and bucket 
+        // For now we just call read_object_md() to check if the object and bucket
         // even exist or throw proper errors.
-        await this.read_object_md({
-            bucket: params.bucket,
-            key: params.key,
-            version_id: params.versionId
-        }, object_sdk);
+        await this.read_object_md(
+            {
+                bucket: params.bucket,
+                key: params.key,
+                version_id: params.versionId,
+            },
+            object_sdk
+        );
     }
 
     ///////////////////
