@@ -13,6 +13,7 @@ const NamespaceCache = require('../sdk/namespace_cache');
 const NamespaceS3 = require('../sdk/namespace_s3');
 const BucketSpaceS3 = require('../sdk/bucketspace_s3');
 const NamespaceNB = require('../sdk/namespace_nb');
+const SensitiveString = require('../util/sensitive_string');
 
 const HELP = `
 Help:
@@ -79,6 +80,7 @@ async function main(argv = minimist(process.argv.slice(2))) {
         };
         const s3_params = {
             // TODO
+            params: { Bucket: 'TODO' },
             endpoint: hub_endpoint,
             accessKeyId: argv.access_key,
             secretAccessKey: argv.secret_key,
@@ -114,8 +116,19 @@ async function main(argv = minimist(process.argv.slice(2))) {
         object_sdk.read_bucket_sdk_website_info = noop;
         object_sdk.read_bucket_sdk_namespace_info = noop;
         object_sdk.read_bucket_sdk_caching_info = noop;
-        object_sdk.read_bucket_sdk_policy_info = noop;
-        object_sdk.read_bucket_usage_info = noop;
+        object_sdk.read_bucket_sdk_policy_info = async () => ({
+            system_owner: null,
+            bucket_owner: null,
+            s3_policy: {
+                statement: [{
+                    effect: 'allow',
+                    action: ['*'],
+                    principal: [new SensitiveString('*')],
+                    resource: ['*'],
+                }]
+            },
+        });
+            object_sdk.read_bucket_usage_info = noop;
 
         const endpoint = require('../endpoint/endpoint');
         await endpoint.start_endpoint({

@@ -37,6 +37,10 @@ const XATTR_USER_PREFIX = 'user.';
 const XATTR_MD5_KEY = XATTR_USER_PREFIX + 'content_md5';
 
 /**
+ * @typedef {fs.Stats & { xattr?: object }} NsfsStats
+ */
+
+/**
  * @param {fs.Dirent} a 
  * @param {fs.Dirent} b 
  * @returns {1|-1|0}
@@ -136,7 +140,7 @@ function to_fs_xattr(xattr) {
 /**
  * @typedef {{
  *  time: number,
- *  stat: fs.Stats,
+ *  stat: NsfsStats,
  *  usage: number,
  *  sorted_entries?: fs.Dirent[],
  * }} ReaddirCacheItem
@@ -179,8 +183,8 @@ class NamespaceFS {
      *  fs_backend?: string;
      *  bucket_id: string;
      *  namespace_resource_id?: string;
-     *  access_mode: string;
-     *  versioning: 'DISABLED' | 'SUSPENDED' | 'ENABLED';
+     *  access_mode?: string;
+     *  versioning?: 'DISABLED' | 'SUSPENDED' | 'ENABLED';
      * }} params
      */
     constructor({ bucket_path, fs_backend, bucket_id, namespace_resource_id, access_mode, versioning }) {
@@ -197,9 +201,9 @@ class NamespaceFS {
         const fs_context = object_sdk &&
             object_sdk.requesting_account && object_sdk.requesting_account.nsfs_account_config;
         if (!fs_context) {
-            const err = new Error('nsfs_account_config is missing');
-            err.rpc_code = 'UNAUTHORIZED';
-            throw err;
+            throw Object.assign(new Error('nsfs_account_config is missing'), {
+                rpc_code: 'UNAUTHORIZED'
+            });
         }
 
         fs_context.backend = this.fs_backend || '';
@@ -301,7 +305,7 @@ class NamespaceFS {
              * @typedef {{
              *  key: string,
              *  common_prefix: boolean,
-             *  stat?: fs.Stats,
+             *  stat?: NsfsStats,
              * }} Result
              */
 
@@ -1278,7 +1282,7 @@ class NamespaceFS {
     }
 
     /**
-     * @param {fs.Stats} stat 
+     * @param {NsfsStats} stat 
      * @returns {string}
      */
     _get_etag(stat) {
@@ -1465,9 +1469,9 @@ class NamespaceFS {
             const list = await this.list_objects({ ...params, limit: 1 }, object_sdk);
 
             if (list && list.objects && list.objects.length > 0) {
-                const err = new Error('underlying directory has files in it');
-                err.rpc_code = 'NOT_EMPTY';
-                throw err;
+                throw Object.assign(new Error('underlying directory has files in it'), {
+                    rpc_code: 'NOT_EMPTY'
+                });
             }
 
             await this._folder_delete(params.full_path, fs_context);

@@ -4,7 +4,6 @@
 const fs = require('fs');
 const util = require('util');
 const minimist = require('minimist');
-const SensitiveString = require('../util/sensitive_string');
 
 const dbg = require('../util/debug_module')(__filename);
 if (!dbg.get_process_name()) dbg.set_process_name('nsfs');
@@ -15,6 +14,7 @@ const nb_native = require('../util/nb_native');
 const ObjectSDK = require('../sdk/object_sdk');
 const NamespaceFS = require('../sdk/namespace_fs');
 const BucketSpaceFS = require('../sdk/bucketspace_fs');
+const SensitiveString = require('../util/sensitive_string');
 
 const HELP = `
 Help:
@@ -132,7 +132,7 @@ function init_request_sdk(req, res, fs_root, fs_config) {
             fs_backend: fs_config.backend,
             bucket_path: fs_root + '/' + bucket_name,
             bucket_id: '000000000000000000000000',
-            namespace_resource_id: undefined
+            namespace_resource_id: undefined,
         });
         namespaces[bucket_name] = ns_fs;
         return ns_fs;
