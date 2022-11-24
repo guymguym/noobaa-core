@@ -407,3 +407,4 @@ function setup_http_server(server) {
 exports.start_endpoint = start_endpoint;
 exports.create_endpoint_handler = create_endpoint_handler;
 exports.create_init_request_sdk = create_init_request_sdk;
+exports.get_auth_token = get_auth_token;

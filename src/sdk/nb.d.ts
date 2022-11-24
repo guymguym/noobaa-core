@@ -796,6 +796,6 @@ interface BucketSpace {
     delete_bucket_policy(params: object): Promise<any>;
     get_bucket_policy(params: object): Promise<any>;
 
-    get_object_lock_configuration(params: object): Promise<any>;
-    put_object_lock_configuration(params: object): Promise<any>;
+    get_object_lock_configuration(params: object, object_sdk: ObjectSDK): Promise<any>;
+    put_object_lock_configuration(params: object, object_sdk: ObjectSDK): Promise<any>;
 }

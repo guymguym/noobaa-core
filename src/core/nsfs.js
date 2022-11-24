@@ -107,7 +107,6 @@ async function main(argv = minimist(process.argv.slice(2))) {
 
         console.log('nsfs: listening on', util.inspect(`http://localhost:${http_port}`));
         console.log('nsfs: listening on', util.inspect(`https://localhost:${https_port}`));
-
     } catch (err) {
         console.error('nsfs: exit on error', err.stack || err);
         process.exit(2);
@@ -115,12 +114,21 @@ async function main(argv = minimist(process.argv.slice(2))) {
 }
 
 function init_request_sdk(req, res, fs_root, fs_config) {
-    const noop = /** @type {any} */ () => {
-        // TODO
+    const rpc_client = {
+        object: {
+            update_endpoint_stats() {
+                // TODO ignored
+            },
+        },
+        stats: {
+            update_nsfs_stats() {
+                // TODO ignored
+            },
+        },
     };
 
     const bs = new BucketSpaceFS({ fs_root });
-    const object_sdk = new ObjectSDK(null, null, null);
+    const object_sdk = new ObjectSDK(rpc_client, rpc_client, null);
 
     // resolve namespace and bucketspace
     const namespaces = {};
@@ -138,31 +146,38 @@ function init_request_sdk(req, res, fs_root, fs_config) {
         return ns_fs;
     };
 
-    object_sdk.get_auth_token = noop;
-    object_sdk.set_auth_token = noop;
-    object_sdk.authorize_request_account = noop;
-    object_sdk.read_bucket_sdk_website_info = noop;
-    object_sdk.read_bucket_sdk_namespace_info = noop;
-    object_sdk.read_bucket_sdk_caching_info = noop;
-    object_sdk.read_bucket_sdk_policy_info = async bucket_name => ({
-        s3_policy: {
-                version: '2012-10-17',
-                statement: [
-                {
-                    effect: 'allow',
-                    action: [ 's3:*' ],
-                    principal: [ new SensitiveString('*')],
-                    resource: [ `arn:aws:s3:::${bucket_name}/*` ]
-                }]
-        },
-        system_owner: undefined,
-        bucket_owner: undefined,
-    });
-    object_sdk.read_bucket_usage_info = noop;
+    object_sdk.authorize_request_account = noopAsync;
     object_sdk.requesting_account = {
-        nsfs_account_config: fs_config
+        nsfs_account_config: fs_config,
     };
+
+    object_sdk.read_bucket_sdk_website_info = noopAsync;
+    object_sdk.read_bucket_sdk_namespace_info = noopAsync;
+    object_sdk.read_bucket_sdk_caching_info = noopAsync;
+    object_sdk.read_bucket_usage_info = noopAsync;
+    object_sdk.read_bucket_sdk_policy_info = async bucket_name => ({
+        bucket_owner: undefined,
+        system_owner: undefined,
+        s3_policy: {
+            version: '2012-10-17',
+            statement: [{
+                effect: 'allow',
+                action: [ 's3:*' ],
+                principal: [ new SensitiveString('*')],
+                resource: [ `arn:aws:s3:::${bucket_name}/*` ],
+            }]
+        }
+    });
+
     req.object_sdk = object_sdk;
+}
+
+// function noop() {
+//     // no comment
+// }
+
+async function noopAsync() {
+    // no comment
 }
 
 exports.main = main;
