@@ -18,6 +18,7 @@ const ObjectIO = require('../sdk/object_io');
 const md_server = require('../server/md_server');
 const server_rpc = require('../server/server_rpc');
 const system_store = require('../server/system_services/system_store');
+const account_server = require('../server/system_services/account_server');
 
 const HELP = `
 Help:
@@ -45,7 +46,7 @@ Options:
     --access_key <key>
     --secret_key <key>
     --http_port <port>     (default 6001)   Set the S3 endpoint listening HTTP port to serve.
-    --https_port <port>    (default 6443)   Set the S3 endpoint listening HTTPS port to serve.
+    --https_port <port>    (default   -1)   Set the S3 endpoint listening HTTPS port to serve.
 `;
 
 const WARNINGS = `
@@ -75,10 +76,10 @@ async function main(argv = minimist(process.argv.slice(2))) {
             dbg.set_module_level(debug_level, 'core');
             nb_native().fs.set_debug_level(debug_level);
         }
-        const http_port = Number(argv.http_port) || 7001;
-        const https_port = Number(argv.https_port) || 7002;
+        const http_port = Number(argv.http_port) || 6003;
+        const https_port = Number(argv.https_port) || -1;
         const hub_endpoint =
-            argv._[0] || (argv.dev === true ? 'http://localhost:6001' : argv.dev) || undefined;
+            argv._[0] || (argv.dev === true ? 'http://localhost:6002' : argv.dev) || undefined;
         if (!hub_endpoint) return print_usage();
 
         console.warn(WARNINGS);
@@ -95,7 +96,16 @@ async function main(argv = minimist(process.argv.slice(2))) {
         server_rpc.register_system_services();
         server_rpc.register_node_services();
         await md_server.register_rpc();
-        system_store.get_instance().load();
+        await system_store.get_instance().load();
+        if (!system_store.get_instance().data.systems[0]) {
+            await account_server.ensure_support_account();
+            await server_rpc.client.system.create_system({
+                name: process.env.CREATE_SYS_NAME,
+                email: process.env.CREATE_SYS_EMAIL,
+                password: process.env.CREATE_SYS_PASSWD || 'DeMo1',
+                must_change_password: true,
+            });
+        }
 
         const endpoint = require('../endpoint/endpoint');
         const auth_token = await endpoint.get_auth_token(process.env);
@@ -110,8 +120,8 @@ async function main(argv = minimist(process.argv.slice(2))) {
             init_request_sdk: (req, res) => init_request_sdk(req, res, s3_params, auth_token),
         });
 
-        console.log(`nscache: serving at http://localhost:${http_port}`);
-        console.log(`nscache: serving at https://localhost:${https_port}`);
+        if (http_port > 0) console.log(`nscache: serving at http://localhost:${http_port}`);
+        if (https_port > 0) console.log(`nscache: serving at https://localhost:${https_port}`);
     } catch (err) {
         console.error('nscache: exit on error', err.stack || err);
         process.exit(2);
@@ -164,8 +174,8 @@ function init_request_sdk(req, res, s3_params, auth_token) {
     object_sdk.read_bucket_usage_info = noopAsync;
 
     object_sdk.read_bucket_sdk_policy_info = async () => ({
-        system_owner: null,
-        bucket_owner: null,
+        system_owner: new SensitiveString(''),
+        bucket_owner: new SensitiveString(''),
         s3_policy: {
             statement: [
                 {
@@ -186,7 +196,7 @@ function noop() {
 }
 
 async function noopAsync() {
-    // no comment
+    noop();
 }
 
 exports.main = main;

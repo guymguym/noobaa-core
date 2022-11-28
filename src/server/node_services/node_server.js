@@ -25,8 +25,9 @@ function _init() {
     } else if (process.env.CORETEST) {
         dbg.log0('nodes_monitor will start manually by coretest');
     } else {
-        dbg.log0('this is master. starting nodes_monitor');
-        return monitor.start();
+        // dbg.log0('this is master. starting nodes_monitor');
+        // return monitor.start();
+        // TODO GUYM
     }
 }
 

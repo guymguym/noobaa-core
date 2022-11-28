@@ -2,7 +2,6 @@
 'use strict';
 
 const fs = require('fs');
-const util = require('util');
 const minimist = require('minimist');
 
 const dbg = require('../util/debug_module')(__filename);
@@ -76,7 +75,7 @@ async function main(argv = minimist(process.argv.slice(2))) {
             nb_native().fs.set_debug_level(debug_level);
         }
         const http_port = Number(argv.http_port) || 6001;
-        const https_port = Number(argv.https_port) || 6443;
+        const https_port = Number(argv.https_port) || -1;
         const backend = argv.backend || (process.env.GPFS_DL_PATH ? 'GPFS' : '');
         const fs_root = argv._[0];
         if (!fs_root) return print_usage();
@@ -105,8 +104,8 @@ async function main(argv = minimist(process.argv.slice(2))) {
             init_request_sdk: (req, res) => init_request_sdk(req, res, fs_root, fs_config),
         });
 
-        console.log('nsfs: listening on', util.inspect(`http://localhost:${http_port}`));
-        console.log('nsfs: listening on', util.inspect(`https://localhost:${https_port}`));
+        if (http_port > 0) console.log(`nsfs: serving at http://localhost:${http_port}`);
+        if (https_port > 0) console.log(`nsfs: serving at https://localhost:${https_port}`);
     } catch (err) {
         console.error('nsfs: exit on error', err.stack || err);
         process.exit(2);
@@ -156,8 +155,8 @@ function init_request_sdk(req, res, fs_root, fs_config) {
     object_sdk.read_bucket_sdk_caching_info = noopAsync;
     object_sdk.read_bucket_usage_info = noopAsync;
     object_sdk.read_bucket_sdk_policy_info = async bucket_name => ({
-        bucket_owner: undefined,
-        system_owner: undefined,
+        system_owner: new SensitiveString(''),
+        bucket_owner: new SensitiveString(''),
         s3_policy: {
             version: '2012-10-17',
             statement: [{
@@ -177,7 +176,7 @@ function init_request_sdk(req, res, fs_root, fs_config) {
 // }
 
 async function noopAsync() {
-    // no comment
+    noop();
 }
 
 exports.main = main;

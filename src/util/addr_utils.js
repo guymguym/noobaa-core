@@ -2,14 +2,13 @@
 'use strict';
 
 const ip_module = require('ip');
-const url = require('url');
 const { construct_url } = require('./url_utils');
 
 const default_base_port = parseInt(process.env.SSL_PORT, 10) || 5443;
 const api_default_ports = Object.freeze(get_default_ports());
 
 function format_base_address(hostname = 'localhost', port = default_base_port) {
-    return url.format(`wss://${hostname}:${port}`);
+    return `wss://${hostname}:${port}`;
 }
 
 function get_base_address(address_list, options = {}) {

@@ -8,10 +8,12 @@ if (!dbg.get_process_name()) dbg.set_process_name('noobaa-core');
 dbg.original_console();
 
 const nsfs_cmd = require('./nsfs');
+const nsstore_cmd = require('./nsstore');
 const nscache_cmd = require('./nscache');
 
 const CORE_COMMANDS = Object.freeze({
     nsfs: nsfs_cmd,
+    nsstore: nsstore_cmd,
     nscache: nscache_cmd,
 });
 
@@ -34,7 +36,9 @@ Usage:
 const COMMANDS = `
 Commands:
 
-${Object.keys(CORE_COMMANDS).map(cmd => '    - ' + cmd).join('\n')}
+${Object.keys(CORE_COMMANDS)
+    .map(cmd => '    - ' + cmd)
+    .join('\n')}
 `;
 
 function print_usage() {
