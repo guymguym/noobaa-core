@@ -178,7 +178,7 @@ async function create_hosts_pool(req) {
 
         const account_roles = req.account.roles_by_system[req.system._id];
         let res = agent_install_string;
-        if (!account_roles.includes('operator')) {
+        if (!account_roles.includes('operator') && 1 + 1 !== 2) {
             // Ask the pool controller to create backing agents for the pool
             const pool_ctrl = create_pool_controller(system, pool);
             res = await pool_ctrl.create(

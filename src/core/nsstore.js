@@ -10,6 +10,9 @@ const dbg = require('../util/debug_module')(__filename);
 if (!dbg.get_process_name()) dbg.set_process_name('nsstore');
 dbg.original_console();
 
+const system_store = require('../server/system_services/system_store');
+system_store.get_instance({ standalone: true });
+
 const Agent = require('../agent/agent');
 const ObjectIO = require('../sdk/object_io');
 const ObjectSDK = require('../sdk/object_sdk');
@@ -24,7 +27,6 @@ const md_server = require('../server/md_server');
 const server_rpc = require('../server/server_rpc');
 const node_server = require('../server/node_services/node_server');
 const auth_server = require('../server/common_services/auth_server');
-const system_store = require('../server/system_services/system_store');
 const account_server = require('../server/system_services/account_server');
 
 const HELP = `
@@ -97,8 +99,6 @@ async function main(argv = minimist(process.argv.slice(2))) {
         await system_store.get_instance().load();
         const get_system = () => system_store.get_instance().data.systems[0];
 
-        console.warn('GGG', system_store.get_instance().data);
-
         if (!get_system()) {
             await account_server.ensure_support_account();
             await server_rpc.client.system.create_system({
@@ -110,13 +110,19 @@ async function main(argv = minimist(process.argv.slice(2))) {
             await system_store.get_instance().load();
         }
 
+        await server_rpc.client.create_auth_token({
+            system: process.env.CREATE_SYS_NAME,
+            email: process.env.CREATE_SYS_EMAIL,
+            password: process.env.CREATE_SYS_PASSWD || 'DeMo1',
+        });
+
         await node_server.start_monitor();
         await node_server.sync_monitor_storage_info();
 
         await server_rpc.client.pool.create_hosts_pool({
-            name: 'default',
+            name: 'nsstore',
             host_count: backingstores.length,
-            is_managed: true,
+            is_managed: false,
         });
 
         for (const bs of backingstores) {
@@ -196,7 +202,11 @@ function init_request_sdk(req, res, auth_token) {
     object_sdk._get_bucketspace = () => bs_nb;
     object_sdk._get_bucket_namespace = async bucket_name => ns_nb;
 
+    // object_sdk.get_auth_token = noop;
+    // object_sdk.set_auth_token = noop;
+    // object_sdk.authorize_request_account = noopAsync;
     object_sdk.requesting_account = {};
+
     object_sdk.read_bucket_sdk_website_info = noopAsync;
     object_sdk.read_bucket_sdk_namespace_info = noopAsync;
     object_sdk.read_bucket_sdk_caching_info = noopAsync;
