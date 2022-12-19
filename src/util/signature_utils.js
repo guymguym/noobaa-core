@@ -40,7 +40,7 @@ function _authenticate_header_v4(req) {
     const service = credentials[3];
 
     // see http://docs.aws.amazon.com/general/latest/gr/sigv4-date-handling.html
-    if (!xamzdate.startsWith(credentials[1])) {
+    if (xamzdate && !xamzdate.startsWith(credentials[1])) {
         throw new Error('Mismatching date in Authorization Credential and x-amz-date');
     }
 
@@ -75,7 +75,7 @@ function _authenticate_query_v4(req) {
     const service = credentials[3];
 
     // see http://docs.aws.amazon.com/general/latest/gr/sigv4-date-handling.html
-    if (!xamzdate.startsWith(credentials[1])) {
+    if (xamzdate && !xamzdate.startsWith(credentials[1])) {
         throw new Error('Mismatching date in X-Amz-Credential and X-Amz-Date');
     }
 
