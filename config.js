@@ -158,9 +158,9 @@ config.STS_CORS_EXPOSE_HEADERS = 'ETag';
 // SECRETS CONFIG  //
 /////////////////////
 
-config.JWT_SECRET = process.env.JWT_SECRET || _get_data_from_file(`/etc/noobaa-server/jwt`);
-config.SERVER_SECRET = process.env.SERVER_SECRET || _get_data_from_file(`/etc/noobaa-server/server_secret`);
-config.NOOBAA_AUTH_TOKEN = process.env.NOOBAA_AUTH_TOKEN || _get_data_from_file(`/etc/noobaa-auth-token/auth_token`);
+config.JWT_SECRET = load_env_or_file('JWT_SECRET', process.env.JWT_SECRET, `/etc/noobaa-server/jwt`);
+config.SERVER_SECRET = load_env_or_file('SERVER_SECRET', process.env.SERVER_SECRET, `/etc/noobaa-server/server_secret`);
+config.NOOBAA_AUTH_TOKEN = load_env_or_file('NOOBAA_AUTH_TOKEN', process.env.NOOBAA_AUTH_TOKEN, `/etc/noobaa-auth-token/auth_token`);
 
 config.ROOT_KEY_MOUNT = '/etc/noobaa-server/root_keys';
 
@@ -750,48 +750,55 @@ function load_config_env_overrides() {
 
             if (type === 'number') {
                 const n = Number(val);
-                if (isNaN(n)) throw new Error(`${val} should be a number`);
-                console.warn(`Overriding config.js from ENV with ${conf_name}=${n} (number)`);
+                if (isNaN(n)) throw new Error(`config: ${conf_name}=${val} should be a number`);
+                console.warn(`config: ENV OVERRIDE ${conf_name}=${n} (number)`);
                 config[conf_name] = n;
 
             } else if (type === 'boolean') {
                 if (val === 'true') {
-                    console.warn(`Overriding config.js from ENV with ${conf_name}=true (bool)`);
+                    console.warn(`config: ENV OVERRIDE ${conf_name}=true (bool)`);
                     config[conf_name] = true;
                 } else if (val === 'false') {
-                    console.warn(`Overriding config.js from ENV with ${conf_name}=false (bool)`);
+                    console.warn(`config: ENV OVERRIDE ${conf_name}=false (bool)`);
                     config[conf_name] = false;
                 } else {
-                    throw new Error(`${val} should be true|false`);
+                    throw new Error(`config: ${conf_name}=${val} should be true|false`);
                 }
 
             } else if (type === 'string' || type === 'undefined') {
-                console.warn(`Overriding config.js from ENV with ${conf_name}=${val} (string)`);
+                console.warn(`config: ENV OVERRIDE ${conf_name}=${val} (string)`);
                 config[conf_name] = val;
 
             } else if (type === 'object') {
                 // TODO: Validation checks, more complex type casting for values if needed
                 config[conf_name] = Array.isArray(prev_val) ? val.split(',') : JSON.parse(val);
-                console.warn(`Overriding config.js from ENV with ${conf_name}=${val} (object of type ${Array.isArray(prev_val) ? 'array' : 'json'})`);
+                console.warn(`config: ENV OVERRIDE ${conf_name}=${val} (object of type ${Array.isArray(prev_val) ? 'array' : 'json'})`);
             } else {
-                console.warn(`Unknown type or mismatch between existing ${type} and provided type for ${conf_name}, skipping ...`);
+                console.warn(`config: Unknown type or mismatch between existing ${type} and provided type for ${conf_name}=${val}, skipping ...`);
             }
 
         } catch (err) {
-            console.warn(`load_config_env_overrides: failed to load ${key}`, err);
+            console.warn(`config: failed to load "${key}"`, err);
         }
     }
 }
 
-function _get_data_from_file(file_name) {
-    let data;
-    try {
-        data = fs.readFileSync(file_name).toString();
-    } catch (e) {
-        dbg.log1(`Error accrued while getting the data from ${file_name}: ${e}`);
-        return;
+/**
+ * @param {string} env_key 
+ * @param {string} env_value prefer the caller to send explicit `process.env.KEY` to keep it clear
+ * @param {string} file_name 
+ * @returns string
+ */
+function load_env_or_file(env_key, env_value, file_name) {
+    if (env_value) return env_value;
+    if (file_name) {
+        try {
+            return fs.readFileSync(file_name, 'utf8');
+        } catch (err) {
+            dbg.log1(`config: failed reading optional ${env_key} from ${file_name} - ${err.message} ${err.code} ${err.errno}`);
+        }
     }
-    return data;
+    return '';
 }
 
 load_config_local();
