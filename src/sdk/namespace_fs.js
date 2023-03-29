@@ -39,6 +39,7 @@ const XATTR_USER_PREFIX = 'user.';
 // TODO: In order to verify validity add content_md5_mtime as well
 const XATTR_CONTENT_TYPE = XATTR_USER_PREFIX + 'content_type';
 const XATTR_MD5_KEY = XATTR_USER_PREFIX + 'content_md5';
+const XATTR_MULTIPART_SIZE = XATTR_USER_PREFIX + 'multipart_size';
 const XATTR_VERSION_ID = XATTR_USER_PREFIX + 'version_id';
 const XATTR_PREV_VERSION_ID = XATTR_USER_PREFIX + 'prev_version_id';
 const XATTR_DELETE_MARKER = XATTR_USER_PREFIX + 'delete_marker';
@@ -818,6 +819,7 @@ class NamespaceFS {
             const stat = await file.stat(fs_context);
             this._throw_if_delete_marker(stat);
             // await this._fail_if_archived_or_sparse_file(fs_context, file_path, stat);
+            this._handle_read_part_number(params, res, stat);
 
             const start = Number(params.start) || 0;
             const end = isNaN(Number(params.end)) ? Infinity : Number(params.end);
@@ -955,6 +957,25 @@ class NamespaceFS {
         }
     }
 
+    // handle read of specific part number from a multipart upload
+    // see _handle_complete_multipart_size()
+    _handle_read_part_number(params, res, stat) {
+        if (params.part_number) {
+            const multipart_size = Number(stat.xattr?.[XATTR_MULTIPART_SIZE]);
+            if (multipart_size > 0) {
+                params.start = multipart_size * (params.part_number - 1);
+                params.end = multipart_size * params.part_number;
+                // TODO s3_get_object has a similar handling which better be written once
+                const content_range = `bytes ${params.start}-${params.end - 1}/${stat.size}`;
+                res.statusCode = 206;
+                res.setHeader('Content-Range', content_range);
+                res.setHeader('Content-Length', params.end - params.start);
+            } else {
+                throw new RpcError('BAD_REQUEST', 'multipart_size not found or not valid in file xattr');
+            }
+        }
+    }
+
 
     ///////////////////
     // OBJECT UPLOAD //
@@ -1068,8 +1089,17 @@ class NamespaceFS {
     // if copy status is LINKED - NO xattr replace
     // xattr_copy = false implies on non server side copy fallback copy (copy status = FALLBACK)
     // target file can be undefined when it's a folder created and size is 0
-    async _finish_upload({ fs_context, params, open_mode, target_file, upload_path, file_path, digest = undefined,
-            copy_res = undefined }) {
+    async _finish_upload({
+        fs_context,
+        params,
+        open_mode,
+        target_file,
+        upload_path,
+        file_path,
+        digest = undefined,
+        copy_res = undefined,
+        multipart_size = undefined,
+    }) {
         const part_upload = file_path === upload_path;
         const same_inode = params.copy_source && copy_res === copy_status_enum.SAME_INODE;
         const is_dir_content = this._is_directory_content(file_path, params.key);
@@ -1082,8 +1112,12 @@ class NamespaceFS {
         if (!params.copy_source || !params.xattr_copy) {
             fs_xattr = to_fs_xattr(params.xattr);
             if (params.content_type) {
-                fs_xattr = fs_xattr || {};
+                fs_xattr ||= {};
                 fs_xattr[XATTR_CONTENT_TYPE] = params.content_type;
+            }
+            if (multipart_size > 0) {
+                fs_xattr ||= {};
+                fs_xattr[XATTR_MULTIPART_SIZE] = String(multipart_size);
             }
             if (digest) {
                 const { md5_b64, key, bucket, upload_id } = params;
@@ -1406,6 +1440,7 @@ class NamespaceFS {
                 const part_path = path.join(params.mpu_path, `part-${num}`);
                 read_file = await this._open_file(fs_context, part_path, config.NSFS_OPEN_READ_MODE);
                 const part_stat = await read_file.stat(fs_context);
+                this._handle_complete_multipart_size(upload_params, num, part_stat, multiparts);
 
                 if (etag !== this._get_etag(part_stat)) {
                     throw new Error('mismatch part etag: ' + util.inspect({ num, etag, part_path, part_stat, params }));
@@ -1452,6 +1487,23 @@ class NamespaceFS {
             throw this._translate_object_error_codes(err);
         } finally {
             await this.complete_object_upload_finally(buffer_pool_cleanup, read_file, target_file, fs_context);
+        }
+    }
+
+    // for multipart uploads with a fixed part size (apart from last part), we set the multipart_size xattr
+    // so that in case of read request with a part number we will be able to resolve to the offset.
+    _handle_complete_multipart_size(upload_params, num, part_stat, multiparts) {
+        if (upload_params.multipart_size) {
+            if (part_stat.size === upload_params.multipart_size) {
+                // ok, same size
+            } else if (num === multiparts.length && part_stat.size < upload_params.multipart_size) {
+                // ok, last part can be smaller
+            } else {
+                // not all parts have same size
+                upload_params.multipart_size = -1;
+            }
+        } else {
+            upload_params.multipart_size = part_stat.size;
         }
     }
 
@@ -1813,6 +1865,10 @@ class NamespaceFS {
         const version_id = return_version_id && this._is_versioning_enabled() && this._get_version_id_by_xattr(stat);
         const delete_marker = stat.xattr[XATTR_DELETE_MARKER] === 'true';
         const content_type = stat.xattr[XATTR_CONTENT_TYPE] || mime.getType(key) || 'application/octet-stream';
+        const multipart_size = Number(stat.xattr?.[XATTR_MULTIPART_SIZE]);
+        const num_multiparts = multipart_size > 0 ?
+            Math.floor((stat.size + multipart_size - 1) / multipart_size) : // div align up
+            undefined;
 
         return {
             obj_id: etag,
@@ -1826,6 +1882,8 @@ class NamespaceFS {
             version_id,
             is_latest,
             delete_marker,
+            multipart_size,
+            num_multiparts,
             xattr: to_xattr(stat.xattr),
 
             // TODO ? storage_class: stat.xattr[XATTR_STORAGE_CLASS_KEY],
