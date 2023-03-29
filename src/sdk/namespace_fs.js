@@ -272,6 +272,27 @@ const dir_cache = new LRUCache({
     max_usage: config.NSFS_DIR_CACHE_MAX_TOTAL_SIZE,
 });
 
+// /**
+//  * @typedef {{
+//  *      file: object,
+//  * }} ReadFileCacheItem
+//  * @type {LRUCache<{ file_path: string, fs_context: object }, string, ReadFileCacheItem>}
+//  */
+// const file_cache = new LRUCache({
+//    name: 'nsfs-fs-cache',
+//    make_key: ({ file_path }) => file_path,
+//    load: async ({ file_path, fs_context }) => {
+//        const file = await nb_native().fs.open(fs_context, file_path, config.NSFS_OPEN_READ_FLAGS);
+//        return { file };
+//    },
+//    validate: async ({ stat }, { dir_path, fs_context }) => {
+//        const new_stat = await nb_native().fs.stat(fs_context, dir_path);
+//        return (new_stat.ino === stat.ino && new_stat.mtimeNsBigint === stat.mtimeNsBigint);
+//    },
+//    item_usage: ({ usage }, dir_path) => usage,
+//    max_usage: config.NSFS_DIR_CACHE_MAX_TOTAL_SIZE,
+// });
+
 /**
  * @typedef {{
  *  time: number,
@@ -1366,6 +1387,13 @@ class NamespaceFS {
         try {
             await this._load_multipart(params, fs_context);
             const upload_path = path.join(params.mpu_path, `part-${params.num}`);
+
+            // const multipart_size = HOW_TO_ATOMIC_GET_SET_MP_SIZE;
+            // if (params.size === multipart_size) {
+            //     await target_file.seek(pos);
+            // } else {
+            // }
+
             // Will get populated in _upload_stream with the MD5 (if MD5 calculation is enabled)
             target_file = await this._open_file(fs_context, upload_path, open_mode);
             const upload_params = { fs_context, params, object_sdk, upload_path, open_mode, target_file, file_path: upload_path };
