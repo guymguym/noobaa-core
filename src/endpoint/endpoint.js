@@ -1,6 +1,13 @@
 /* Copyright (C) 2016 NooBaa */
 'use strict';
 
+// The endpoint process uses the threadpool extensively to call cpu intensive native code
+// or blocking system calls such as filesystem calls. The default threadpool size is just 4
+// which is very low and causes contention, so we bump it up and pay the memory price.
+// This has to be set first before the process initializes the thread pool.
+// See https://nodejs.org/dist/latest-v18.x/docs/api/cli.html#uv_threadpool_sizesize
+process.env.UV_THREADPOOL_SIZE = '1024';
+
 // load .env file before any other modules so that it will contain
 // all the arguments even when the modules are loading.
 require('../util/dotenv').load();
