@@ -386,7 +386,7 @@ class NamespaceFS {
      * @returns {nb.NativeFSContext}
      */
     prepare_fs_context(object_sdk) {
-        const fs_context = object_sdk?.requesting_account?.nsfs_account_config;
+        const fs_context = object_sdk?.requesting_account?.nsfs_account_config ?? {};
         if (!fs_context) throw new RpcError('UNAUTHORIZED', 'nsfs_account_config is missing');
         fs_context.backend = this.fs_backend || '';
         fs_context.warn_threshold_ms = config.NSFS_WARN_THRESHOLD_MS;

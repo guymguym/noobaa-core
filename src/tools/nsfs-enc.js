@@ -56,20 +56,19 @@ async function main(argv = minimist(process.argv.slice(2))) {
         const file_path = argv._[0];
         dbg.log0('nsfs-enc: file_path', file_path);
         if (nb_native().fs.gpfs) {
-            const fs_account_config = {
+            const fs_context = {
                 uid: Number(argv.uid) || process.getuid(),
                 gid: Number(argv.gid) || process.getgid(),
-                backend: '',
                 warn_threshold_ms: config.NSFS_WARN_THRESHOLD_MS,
             };
             let is_enc;
             if (argv.filewrap) {
-                const file = await nb_native().fs.open(fs_account_config, file_path);
-                const stat = await file.stat(fs_account_config);
+                const file = await nb_native().fs.open(fs_context, file_path);
+                const stat = await file.stat(fs_context);
                 is_enc = Boolean(stat.xattr['gpfs.Encryption']);
-                await file.close(fs_account_config);
+                await file.close(fs_context);
             } else {
-                const stat = await nb_native().fs.stat(fs_account_config, file_path);
+                const stat = await nb_native().fs.stat(fs_context, file_path);
                 is_enc = Boolean(stat.xattr['gpfs.Encryption']);
             }
             dbg.log0('nsfs-enc: file is encrypted?', is_enc);

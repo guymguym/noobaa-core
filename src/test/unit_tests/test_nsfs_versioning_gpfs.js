@@ -18,7 +18,7 @@ const XATTR_VERSION_ID = 'user.version_id';
 const XATTR_PREV_VERSION_ID = 'user.prev_version_id';
 //const XATTR_DELETE_MARKER = 'user.delete_marker';
 
-const DEFAULT_FS_CONFIG = {
+const FS_CONTEXT = {
     uid: process.getuid(),
     gid: process.getgid(),
     backend: 'GPFS',
@@ -238,7 +238,7 @@ async function delete_object(dummy_object_sdk, ns, bucket, key, version_id) {
 async function stat_and_get_all(full_path, key) {
     const key_path = path.join(full_path, key);
     try {
-        const stat = await nb_native().fs.stat(DEFAULT_FS_CONFIG, key_path);
+        const stat = await nb_native().fs.stat(FS_CONTEXT, key_path);
         return stat;
     } catch (err) {
         console.log('stat_and_get_all Error: ', err);
@@ -251,7 +251,7 @@ async function find_max_version_past(full_path, key, dir, skip_list) {
     try {
         let max_mtime_nsec = 0;
         let max_path;
-        const versions = (await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir)).filter(entry => {
+        const versions = (await nb_native().fs.readdir(FS_CONTEXT, versions_dir)).filter(entry => {
             const index = entry.name.endsWith('_null') ? entry.name.lastIndexOf('_null') :
                 entry.name.lastIndexOf('_mtime-');
             // don't fail if version entry name is invalid, just keep searching
@@ -261,7 +261,7 @@ async function find_max_version_past(full_path, key, dir, skip_list) {
             if (skip_list ? !skip_list.includes(entry.name.slice(key.length + 1)) : true) {
                 const version_str = entry.name.slice(key.length + 1);
                 const { mtimeNsBigint } = _extract_version_info_from_xattr(version_str) ||
-                    (await nb_native().fs.stat(DEFAULT_FS_CONFIG, path.join(versions_dir, entry.name)));
+                    (await nb_native().fs.stat(FS_CONTEXT, path.join(versions_dir, entry.name)));
 
                 if (mtimeNsBigint > max_mtime_nsec) {
                     max_mtime_nsec = mtimeNsBigint;
@@ -303,13 +303,13 @@ async function version_file_must_not_exists(full_path, key, dir, version_id) {
 
 // async function is_delete_marker(full_path, dir, key, version) {
 //     const version_path = path.join(full_path, dir, '.versions', key + '_' + version);
-//     const stat = await nb_native().fs.stat(DEFAULT_FS_CONFIG, version_path);
+//     const stat = await nb_native().fs.stat(FS_CONTEXT, version_path);
 //     return stat && stat.xattr[XATTR_DELETE_MARKER];
 // }
 
 // async function stat_and_get_version_id(full_path, key) {
 //     const key_path = path.join(full_path, key);
-//     const stat = await nb_native().fs.stat(DEFAULT_FS_CONFIG, key_path);
+//     const stat = await nb_native().fs.stat(FS_CONTEXT, key_path);
 //     return get_version_id_by_xattr(stat);
 // }
 

@@ -23,10 +23,7 @@ const XATTR_PREV_VERSION_ID = 'user.prev_version_id';
 const XATTR_DELETE_MARKER = 'user.delete_marker';
 const NULL_VERSION_ID = 'null';
 
-const DEFAULT_FS_CONFIG = {
-    uid: process.getuid(),
-    gid: process.getgid(),
-    backend: '',
+const FS_CONTEXT = {
     warn_threshold_ms: 100,
 };
 
@@ -1131,7 +1128,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
             }
             const versions_dir = path.join(full_multi_delete_path, '.versions');
             await fs_utils.file_must_not_exist(versions_dir);
-            const objects = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, full_multi_delete_path);
+            const objects = await nb_native().fs.readdir(FS_CONTEXT, full_multi_delete_path);
             assert.equal(objects.length, 1);
             assert.ok(objects[0].name.startsWith('.noobaa-nsfs_'));
 
@@ -1156,7 +1153,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
                 assert.equal(res.DeleteMarker, true);
             }
             const versions_dir = path.join(full_multi_delete_path, '.versions');
-            const versions = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir);
+            const versions = await nb_native().fs.readdir(FS_CONTEXT, versions_dir);
             assert.equal(versions.length, 302); // 1 null version + 30 dm and versions + 1 new dm
             await delete_object_versions(full_multi_delete_path, key1);
             await delete_object_versions(full_multi_delete_path, 'a');
@@ -1181,7 +1178,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
                 assert.equal(res.DeleteMarker, true);
             }
             const versions_dir = path.join(full_multi_delete_path, '.versions');
-            const versions = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir);
+            const versions = await nb_native().fs.readdir(FS_CONTEXT, versions_dir);
             assert.equal(versions.length, 149);
             await fs_utils.file_must_exist(path.join(full_multi_delete_path, key1));
             const latest_stat = await stat_and_get_all(full_multi_delete_path, key1);
@@ -1214,7 +1211,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
                 assert.equal(res.DeleteMarker, true);
             }
             const versions_dir = path.join(full_multi_delete_path, '.versions');
-            const versions = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir);
+            const versions = await nb_native().fs.readdir(FS_CONTEXT, versions_dir);
             // 150 of key1 and 149 of key2 (latest version of key2 is in the parent dir)
             assert.equal(versions.length, 299);
             await fs_utils.file_must_not_exist(path.join(full_multi_delete_path, key1));
@@ -1248,7 +1245,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
                 if (i % 2 === 0) assert.equal(delete_res.Deleted[i].DeleteMarker, undefined);
             }
             const versions_dir = path.join(full_multi_delete_path, '.versions');
-            const versions = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir);
+            const versions = await nb_native().fs.readdir(FS_CONTEXT, versions_dir);
             assert.equal(versions.length, 200);
             await fs_utils.file_must_not_exist(path.join(full_multi_delete_path, key1));
             const latest_dm_version = await find_max_version_past(full_multi_delete_path, key1);
@@ -1279,7 +1276,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
                 if (i % 2 === 0) assert.equal(delete_res.Deleted[i].DeleteMarker, undefined);
             }
             const versions_dir = path.join(full_multi_delete_path, '.versions');
-            const versions = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir);
+            const versions = await nb_native().fs.readdir(FS_CONTEXT, versions_dir);
 
             assert.equal(versions.length, 198);
             await fs_utils.file_must_exist(path.join(full_multi_delete_path, key1));
@@ -1316,7 +1313,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
                 if (i % 2 === 1) assert.equal(delete_res.Deleted[i].DeleteMarker, undefined);
             }
             const versions_dir = path.join(full_multi_delete_path, '.versions');
-            const versions = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir);
+            const versions = await nb_native().fs.readdir(FS_CONTEXT, versions_dir);
 
             assert.equal(versions.length, 201); // 200 dm and versions + 1 new dm
             await fs_utils.file_must_not_exist(path.join(full_multi_delete_path, key1));
@@ -1352,7 +1349,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
                 assert.equal(delete_res.Deleted[i].DeleteMarker, true);
             }
             const versions_dir = path.join(full_multi_delete_path, '.versions');
-            const versions = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir);
+            const versions = await nb_native().fs.readdir(FS_CONTEXT, versions_dir);
 
             assert.equal(versions.length, 201); // 200 dm and versions + dm + new dm
             await fs_utils.file_must_not_exist(path.join(full_multi_delete_path, key1));
@@ -1570,7 +1567,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
         });
 
         mocha.after(async () => {
-            if (file_pointer) await file_pointer.close(DEFAULT_FS_CONFIG);
+            if (file_pointer) await file_pointer.close(FS_CONTEXT);
             fs_utils.folder_delete(tmp_fs_root);
             for (const email of accounts) {
                 await rpc_client.account.delete_account({ email });
@@ -1741,7 +1738,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
 
         mocha.it('get object, with version enabled, delete marker placed on latest object - should return NoSuchKey', async function() {
             const xattr_delete_marker = { 'user.delete_marker': 'true' };
-            await file_pointer.replacexattr(DEFAULT_FS_CONFIG, xattr_delete_marker);
+            await file_pointer.replacexattr(FS_CONTEXT, xattr_delete_marker);
             try {
                 await s3_client.getObject({Bucket: bucket_name, Key: en_version_key}).promise();
                 assert.fail('Should fail');
@@ -1752,14 +1749,14 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
 
         mocha.it('get object, with version enabled, delete marker placed on latest object, version id specified - should return the version object', async function() {
             const xattr_delete_marker = { 'user.delete_marker': 'true' };
-            await file_pointer.replacexattr(DEFAULT_FS_CONFIG, xattr_delete_marker);
+            await file_pointer.replacexattr(FS_CONTEXT, xattr_delete_marker);
             const res = await s3_client.getObject({Bucket: bucket_name, Key: en_version_key, VersionId: versionID_2}).promise();
             assert.equal(res.Body, en_version_body_v1);
         });
 
         mocha.it('head object, with version enabled, delete marked xattr placed on latest object - should return ENOENT', async function() {
             const xattr_delete_marker = { 'user.delete_marker': 'true' };
-            await file_pointer.replacexattr(DEFAULT_FS_CONFIG, xattr_delete_marker);
+            await file_pointer.replacexattr(FS_CONTEXT, xattr_delete_marker);
             try {
                 await s3_client.headObject({Bucket: bucket_name, Key: en_version_key}).promise();
                 assert.fail('Should fail');
@@ -1770,7 +1767,7 @@ mocha.describe('bucketspace namespace_fs - versioning', function() {
 
         mocha.it('head object, with version enabled, delete marked xattr placed on latest object, version id specified - should return the version object', async function() {
             const xattr_delete_marker = { 'user.delete_marker': 'true' };
-            await file_pointer.replacexattr(DEFAULT_FS_CONFIG, xattr_delete_marker);
+            await file_pointer.replacexattr(FS_CONTEXT, xattr_delete_marker);
             try {
                 await s3_client.headObject({Bucket: bucket_name, Key: en_version_key, VersionId: versionID_2}).promise();
                 assert.ok('Expected versioned object returned');
@@ -1789,7 +1786,7 @@ async function delete_object_versions(bucket_path, key) {
     // delete past versions
     const versions_dir = path.join(bucket_path, '.versions');
     try {
-        const versions = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir);
+        const versions = await nb_native().fs.readdir(FS_CONTEXT, versions_dir);
 
         for (const entry of versions) {
             if (entry.name.startsWith(key)) {
@@ -1828,10 +1825,10 @@ async function upload_object_versions(s3_client, bucket, key, object_types_arr) 
 async function find_max_version_past(full_path, key, dir, skip_list) {
     const versions_dir = path.join(full_path, dir || '', '.versions');
     try {
-        //let versions = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir);
-        let max_mtime_nsec = 0;
+        //let versions = await nb_native().fs.readdir(FS_CONTEXT, versions_dir);
+        let max_mtime_nsec = 0n;
         let max_path;
-        const versions = (await nb_native().fs.readdir(DEFAULT_FS_CONFIG, versions_dir)).filter(entry => {
+        const versions = (await nb_native().fs.readdir(FS_CONTEXT, versions_dir)).filter(entry => {
             const index = entry.name.endsWith('_null') ? entry.name.lastIndexOf('_null') :
                 entry.name.lastIndexOf('_mtime-');
             // don't fail if version entry name is invalid, just keep searching
@@ -1841,7 +1838,7 @@ async function find_max_version_past(full_path, key, dir, skip_list) {
             if (skip_list ? !skip_list.includes(entry.name.slice(key.length + 1)) : true) {
                 const version_str = entry.name.slice(key.length + 1);
                 const { mtimeNsBigint } = _extract_version_info_from_xattr(version_str) ||
-                    (await nb_native().fs.stat(DEFAULT_FS_CONFIG, path.join(versions_dir, entry.name)));
+                    (await nb_native().fs.stat(FS_CONTEXT, path.join(versions_dir, entry.name)));
 
                 if (mtimeNsBigint > max_mtime_nsec) {
                     max_mtime_nsec = mtimeNsBigint;
@@ -1882,25 +1879,25 @@ async function get_obj_and_compare_data(s3, bucket_name, key, expected_body) {
 
 async function is_delete_marker(full_path, dir, key, version) {
     const version_path = path.join(full_path, dir, '.versions', key + '_' + version);
-    const stat = await nb_native().fs.stat(DEFAULT_FS_CONFIG, version_path);
+    const stat = await nb_native().fs.stat(FS_CONTEXT, version_path);
     return stat && stat.xattr[XATTR_DELETE_MARKER];
 }
 
 async function stat_and_get_version_id(full_path, key) {
     const key_path = path.join(full_path, key);
-    const stat = await nb_native().fs.stat(DEFAULT_FS_CONFIG, key_path);
+    const stat = await nb_native().fs.stat(FS_CONTEXT, key_path);
     return get_version_id_by_xattr(stat);
 }
 
 async function stat_and_get_all(full_path, key) {
     const key_path = path.join(full_path, key);
-    const stat = await nb_native().fs.stat(DEFAULT_FS_CONFIG, key_path);
+    const stat = await nb_native().fs.stat(FS_CONTEXT, key_path);
     return stat;
 }
 
 async function compare_version_ids(full_path, key, put_result_version_id, prev_version_id, is_enabled = true) {
     const key_path = path.join(full_path, key);
-    const stat = await nb_native().fs.stat(DEFAULT_FS_CONFIG, key_path);
+    const stat = await nb_native().fs.stat(FS_CONTEXT, key_path);
     const new_version_id = is_enabled ? get_version_id_by_stat(stat) : NULL_VERSION_ID;
     const xattr_version_id = get_version_id_by_xattr(stat);
     if (is_enabled) {
@@ -2113,7 +2110,7 @@ mocha.describe('List-objects', function() {
     });
 
     mocha.after(async () => {
-        await file_pointer.close(DEFAULT_FS_CONFIG);
+        await file_pointer.close(FS_CONTEXT);
         fs_utils.folder_delete(tmp_fs_root);
         for (const email of accounts) {
             await rpc_client.account.delete_account({ email });
@@ -2212,7 +2209,7 @@ mocha.describe('List-objects', function() {
 
     mocha.it('list objects - deleted object should not be listed', async function() {
         const xattr_delete_marker = { 'user.delete_marker': 'true' };
-        file_pointer.replacexattr(DEFAULT_FS_CONFIG, xattr_delete_marker);
+        file_pointer.replacexattr(FS_CONTEXT, xattr_delete_marker);
         const res = await s3_client.listObjects({Bucket: bucket_name}).promise();
         let count = 0;
         res.Contents.forEach(val => {
@@ -2225,7 +2222,7 @@ mocha.describe('List-objects', function() {
 
     mocha.it('list object versions - All versions of the object should be listed', async function() {
         const xattr_delete_marker = { 'user.delete_marker': 'true' };
-        file_pointer.replacexattr(DEFAULT_FS_CONFIG, xattr_delete_marker);
+        file_pointer.replacexattr(FS_CONTEXT, xattr_delete_marker);
         const res = await s3_client.listObjectVersions({Bucket: bucket_name}).promise();
         let count = 0;
         res.Versions.forEach(val => {
@@ -2238,7 +2235,7 @@ mocha.describe('List-objects', function() {
 
     mocha.it('list object versions - Check whether the deleted object is the latest and should be present under delete markers as well', async function() {
         const xattr_delete_marker = { 'user.delete_marker': 'true' };
-        file_pointer.replacexattr(DEFAULT_FS_CONFIG, xattr_delete_marker);
+        file_pointer.replacexattr(FS_CONTEXT, xattr_delete_marker);
         const res = await s3_client.listObjectVersions({Bucket: bucket_name}).promise();
 
         res.Versions.forEach(val => {
@@ -2252,14 +2249,14 @@ mocha.describe('List-objects', function() {
 });
 
 async function create_object(object_path, data, version_id, return_fd) {
-    const target_file = await nb_native().fs.open(DEFAULT_FS_CONFIG, object_path, 'w+');
+    const target_file = await nb_native().fs.open(FS_CONTEXT, object_path, 'w+');
     await fs.promises.writeFile(object_path, data);
     if (version_id !== 'null') {
         const xattr_version_id = { 'user.version_id': `${version_id}` };
-        await target_file.replacexattr(DEFAULT_FS_CONFIG, xattr_version_id);
+        await target_file.replacexattr(FS_CONTEXT, xattr_version_id);
     }
     if (return_fd) return target_file;
-    await target_file.close(DEFAULT_FS_CONFIG);
+    await target_file.close(FS_CONTEXT);
 }
 
 exports.generate_nsfs_account = generate_nsfs_account;

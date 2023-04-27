@@ -28,10 +28,7 @@ const XATTR_DIR_CONTENT = 'user.dir_content';
 
 const MAC_PLATFORM = 'darwin';
 
-const DEFAULT_FS_CONFIG = {
-    uid: process.getuid(),
-    gid: process.getgid(),
-    backend: '',
+const FS_CONTEXT = {
     warn_threshold_ms: 100,
 };
 
@@ -360,7 +357,7 @@ mocha.describe('namespace_fs', function() {
 
             let entries;
             try {
-                entries = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, ns_tmp_bucket_path + dir_1);
+                entries = await nb_native().fs.readdir(FS_CONTEXT, ns_tmp_bucket_path + dir_1);
             } catch (e) {
                 assert.ifError(e);
             }
@@ -376,7 +373,7 @@ mocha.describe('namespace_fs', function() {
 
             let entries;
             try {
-                entries = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, ns_tmp_bucket_path + dir_2);
+                entries = await nb_native().fs.readdir(FS_CONTEXT, ns_tmp_bucket_path + dir_2);
             } catch (e) {
                 assert.ifError(e);
             }
@@ -389,7 +386,7 @@ mocha.describe('namespace_fs', function() {
             let entries_before;
             let entries_after;
             try {
-                entries_before = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, ns_tmp_bucket_path);
+                entries_before = await nb_native().fs.readdir(FS_CONTEXT, ns_tmp_bucket_path);
 
                 const delete_res = await ns_tmp.delete_object({
                     bucket: upload_bkt,
@@ -397,7 +394,7 @@ mocha.describe('namespace_fs', function() {
                 }, dummy_object_sdk);
                 console.log('delete_object response', inspect(delete_res));
 
-                entries_after = await nb_native().fs.readdir(DEFAULT_FS_CONFIG, ns_tmp_bucket_path);
+                entries_after = await nb_native().fs.readdir(FS_CONTEXT, ns_tmp_bucket_path);
             } catch (e) {
                 assert.ifError(e);
             }
@@ -632,7 +629,7 @@ mocha.describe('namespace_fs folders tests', function() {
         //     }, dummy_object_sdk);
         //     console.log('copy object read folder object md ', inspect(get_md_res));
 
-        //     const full_xattr2 = await get_xattr(DEFAULT_FS_CONFIG, path.join(ns_tmp_bucket_path, upload_key_2_copy));
+        //     const full_xattr2 = await get_xattr(FS_CONTEXT, path.join(ns_tmp_bucket_path, upload_key_2_copy));
         //     console.log('copy object full xattr ', inspect(full_xattr2));
         //     assert.equal(Object.keys(full_xattr2).length, 3);
         //     assert.deepEqual(full_xattr2, user_md_and_dir_content_xattr);
@@ -650,7 +647,7 @@ mocha.describe('namespace_fs folders tests', function() {
             assert.equal(read_res.buffers.length, 1);
             assert.equal(read_res.total_length, 100);
 
-            if (Object.keys(not_user_xattr).length) await set_xattr(DEFAULT_FS_CONFIG, ns_tmp_bucket_path + '/' + upload_key_2, not_user_xattr);
+            if (Object.keys(not_user_xattr).length) await set_xattr(FS_CONTEXT, ns_tmp_bucket_path + '/' + upload_key_2, not_user_xattr);
 
             const new_size = 0;
             await ns_tmp.upload_object({
@@ -897,7 +894,7 @@ mocha.describe('namespace_fs folders tests', function() {
 // });
 
 async function get_xattr(file_path) {
-    const stat = await nb_native().fs.stat(DEFAULT_FS_CONFIG, file_path);
+    const stat = await nb_native().fs.stat(FS_CONTEXT, file_path);
     return stat.xattr;
 }
 
@@ -905,13 +902,13 @@ async function set_xattr(fs_account_config, file_path, fs_xattr) {
     let file;
     try {
         file = await nb_native().fs.open(fs_account_config, file_path, undefined, get_umasked_mode(config.BASE_MODE_FILE));
-        const full_xattr = await file.replacexattr(DEFAULT_FS_CONFIG, fs_xattr);
+        const full_xattr = await file.replacexattr(FS_CONTEXT, fs_xattr);
         return full_xattr;
     } catch (err) {
         console.log('ERROR: test_namespace_fs set_xattr', err);
         throw err;
     } finally {
-        file.close(DEFAULT_FS_CONFIG, file_path);
+        file.close(FS_CONTEXT, file_path);
     }
 }
 

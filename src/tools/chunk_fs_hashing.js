@@ -21,10 +21,9 @@ const CHUNK = Number(argv.chunk) || 16 * 1024;
 const PART_SIZE = Number(argv.part_size) || 20 * 1024 * 1024;
 const F_PREFIX = argv.dst_folder || '/tmp/chunk_fs_hashing/';
 
-const DEFAULT_FS_CONFIG = {
+const FS_CONFIG = {
     uid: Number(argv.uid) || process.getuid(),
     gid: Number(argv.gid) || process.getgid(),
-    backend: '',
     warn_threshold_ms: 100,
 };
 
@@ -77,7 +76,7 @@ async function hash_target() {
         const target = new TargetHash();
         const chunk_fs = new ChunkFS({
             target_file: target,
-            fs_context: DEFAULT_FS_CONFIG,
+            fs_context: FS_CONFIG,
             rpc_client: DUMMY_RPC,
             namespace_resource_id: 'MajesticSloth'
         });
@@ -106,7 +105,7 @@ async function file_target(chunk_size = CHUNK, parts = PARTS) {
         const content_md5 = crypto.createHash('md5').update(data).digest('hex');
         const F_TARGET = path.join(F_PREFIX, content_md5);
         try {
-            target_file = await nb_native().fs.open(DEFAULT_FS_CONFIG, F_TARGET, 'w', get_umasked_mode(config.BASE_MODE_FILE));
+            target_file = await nb_native().fs.open(FS_CONFIG, F_TARGET, 'w', get_umasked_mode(config.BASE_MODE_FILE));
             // Using async generator function in order to push data in small chunks
             const source_stream = stream.Readable.from(async function*() {
                 for (let i = 0; i < data.length; i += chunk_size) {
@@ -115,7 +114,7 @@ async function file_target(chunk_size = CHUNK, parts = PARTS) {
             }());
             const chunk_fs = new ChunkFS({
                 target_file,
-                fs_context: DEFAULT_FS_CONFIG,
+                fs_context: FS_CONFIG,
                 rpc_client: DUMMY_RPC,
                 namespace_resource_id: 'MajesticSloth'
             });
@@ -123,11 +122,11 @@ async function file_target(chunk_size = CHUNK, parts = PARTS) {
             await stream_utils.wait_finished(chunk_fs);
             if (XATTR) {
                 await target_file.replacexattr(
-                    DEFAULT_FS_CONFIG,
+                    FS_CONFIG,
                     assign_md5_to_fs_xattr(chunk_fs.digest, {})
                 );
             }
-            if (FSYNC) await target_file.fsync(DEFAULT_FS_CONFIG);
+            if (FSYNC) await target_file.fsync(FS_CONFIG);
             const write_hash = crypto.createHash('md5').update(fs.readFileSync(F_TARGET)).digest('hex');
             console.log(
                 'File target',
@@ -144,7 +143,7 @@ async function file_target(chunk_size = CHUNK, parts = PARTS) {
             fs.rmSync(F_TARGET);
         } finally {
             if (target_file) {
-                await target_file.close(DEFAULT_FS_CONFIG);
+                await target_file.close(FS_CONFIG);
             }
         }
     });

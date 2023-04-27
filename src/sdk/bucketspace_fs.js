@@ -28,9 +28,6 @@ class BucketSpaceFS {
     constructor({ fs_root }) {
         this.fs_root = fs_root;
         this.fs_context = {
-            uid: process.getuid(),
-            gid: process.getgid(),
-            backend: '',
             warn_threshold_ms: config.NSFS_WARN_THRESHOLD_MS,
         };
     }

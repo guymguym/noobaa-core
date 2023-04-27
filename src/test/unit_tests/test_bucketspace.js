@@ -29,10 +29,7 @@ const new_account_params = {
     s3_access: true,
 };
 
-const DEFAULT_FS_CONFIG = {
-    uid: process.getuid(),
-    gid: process.getgid(),
-    backend: '',
+const FS_CONTEXT = {
     warn_threshold_ms: 100,
 };
 
@@ -462,10 +459,10 @@ mocha.describe('bucket operations - namespace_fs', function() {
             Metadata: { 'new_xattr': 'new_xattr_val' } }).promise();
 
         const p = path.join(tmp_fs_root, '/new_s3_buckets_dir', bucket_name + '-s3', key);
-        const stat1 = await stat(DEFAULT_FS_CONFIG, p);
+        const stat1 = await stat(FS_CONTEXT, p);
 
         const p_source = path.join(tmp_fs_root, '/new_s3_buckets_dir', bucket_name + '-s3', source_key);
-        const stat_source = await stat(DEFAULT_FS_CONFIG, p_source);
+        const stat_source = await stat(FS_CONTEXT, p_source);
 
         await s3_correct_uid.deleteObject({ Bucket: bucket_name + '-s3', Key: 'ob22.txt' }).promise();
 
@@ -486,10 +483,10 @@ mocha.describe('bucket operations - namespace_fs', function() {
             Metadata: {'wont_replace': 'wont'} }).promise();
 
         const p = path.join(tmp_fs_root, '/new_s3_buckets_dir', bucket_name + '-s3', key);
-        const stat1 = await stat(DEFAULT_FS_CONFIG, p);
+        const stat1 = await stat(FS_CONTEXT, p);
 
         const p_source = path.join(tmp_fs_root, '/new_s3_buckets_dir', bucket_name + '-s3', source_key);
-        const stat_source = await stat(DEFAULT_FS_CONFIG, p_source);
+        const stat_source = await stat(FS_CONTEXT, p_source);
 
         await s3_correct_uid.deleteObject({ Bucket: bucket_name + '-s3', Key: key }).promise();
 
