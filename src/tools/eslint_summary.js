@@ -7,14 +7,14 @@ if (require.main === module) {
     main();
 }
 
-function main() {
+async function main() {
     const argv = minimist(process.argv);
     const dirs = argv._.slice(2);
     if (!dirs.length) dirs.push('src');
     const include_rules_set = argv.i && new Set(make_array(argv.i));
     const exclude_rules_set = argv.x && new Set(make_array(argv.x));
-    const cli = new eslint.CLIEngine();
-    const report = cli.executeOnFiles(dirs);
+    const linter = new eslint.ESLint();
+    const report = await linter.lintFiles(dirs);
     const rules_array = make_rules_array(report, include_rules_set, exclude_rules_set);
     rules_array.sort(rules_sorting);
     rules_array.forEach(rule => {
@@ -31,9 +31,16 @@ function main() {
     });
 }
 
+/**
+ * 
+ * @param {eslint.ESLint.LintResult[]} report 
+ * @param {Set} include_rules_set 
+ * @param {Set} exclude_rules_set 
+ * @returns {Array}
+ */
 function make_rules_array(report, include_rules_set, exclude_rules_set) {
     const rules_map = new Map();
-    report.results.forEach(file => {
+    report.forEach(file => {
         file.messages.forEach(msg => {
             const id = msg.ruleId;
             if (include_rules_set && !include_rules_set.has(id)) return;
@@ -46,8 +53,7 @@ function make_rules_array(report, include_rules_set, exclude_rules_set) {
             if (!rule.msgs.length) {
                 rules_map.set(id, rule);
             }
-            msg.file = file;
-            rule.msgs.push(msg);
+            rule.msgs.push({ ...msg, file });
         });
     });
     const rules_array = Array.from(rules_map.values());

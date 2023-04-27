@@ -248,6 +248,8 @@ module.exports = {
         // we don't enforce comments to above/after the line, both work ok
         'line-comment-position': 'off',
 
+        'logical-assignment-operators': 'off',
+
         // ternary operator is better split to 3 lines for readability
         // TODO eslint multiline-ternary should be error
         'multiline-ternary': 'off',

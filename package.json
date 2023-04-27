@@ -125,6 +125,7 @@
     "yazl": "2.5.1"
   },
   "devDependencies": {
+    "@types/eslint": "8.44.0",
     "@types/jest": "29.5.2",
     "@types/lodash": "4.14.195",
     "@types/mongodb": "4.0.7",

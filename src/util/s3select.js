@@ -82,17 +82,8 @@ class S3SelectStream extends Transform {
     }
 
     /**
-         * @param {{
-    *     query: string;
-    *     input_format: 'CSV' | 'JSON';
-    *     input_serialization_format: {
-    *        FieldDelimiter: string;
-    *        RecordDelimiter: string;
-    *        FileHeaderInfo: string;
-    *     };
-    *     records_header_buf: Buffer;
-    *  }} opts
-    */
+     * @param {nb.S3SelectOptions & import('stream').TransformOptions} opts
+     */
     constructor(opts) {
         super(opts);
         this.stats = {

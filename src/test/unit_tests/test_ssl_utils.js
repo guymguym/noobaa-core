@@ -160,7 +160,7 @@ mocha.describe('ssl_utils', function() {
                 });
                 server.listen(resolve);
             });
-            const { port } = server.address();
+            const { port } = /** @type {import('net').AddressInfo} */ (server.address());
             await new Promise((resolve, reject) => {
                 const req = https.request({
                     method: 'GET',

@@ -21,7 +21,7 @@ class ChunkCoder extends stream.Transform {
      * @param {{
     *      watermark?: number,
     *      concurrency?: number,
-    *      coder?: string,
+    *      coder?: 'enc' | 'dec',
     *      chunk_coder_config?: object,
     *      cipher_key_b64?: string,
     * }} args 
