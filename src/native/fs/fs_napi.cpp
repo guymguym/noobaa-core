@@ -1,30 +1,30 @@
 /* Copyright (C) 2016 NooBaa */
 #include "../util/b64.h"
+#include "../util/buf.h"
 #include "../util/common.h"
 #include "../util/napi.h"
 #include "../util/os.h"
-#include "../util/buf.h"
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <map>
 #include <math.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <sys/xattr.h>
 #include <thread>
 #include <typeinfo>
 #include <unistd.h>
 #include <uv.h>
-#include <sys/xattr.h>
 #include <vector>
-#include <stdlib.h>
-#include <limits.h>
 
 #ifdef __APPLE__
-    #include <sys/param.h>
     #include <sys/mount.h>
+    #include <sys/param.h>
 #else
     #include <sys/statfs.h>
 #endif
@@ -34,30 +34,53 @@ namespace noobaa
 
 DBG_INIT(0);
 
-const static std::map<std::string, int> flags_to_case = {
-    { "r", O_RDONLY },
-    { "rs", O_RDONLY | O_SYNC },
-    { "sr", O_RDONLY | O_SYNC },
-    { "r+", O_RDWR },
-    { "rs+", O_RDWR | O_SYNC },
-    { "sr+", O_RDWR | O_SYNC },
-    { "w", O_TRUNC | O_CREAT | O_WRONLY },
-    { "wx", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
-    { "xw", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
-    { "w+", O_TRUNC | O_CREAT | O_RDWR },
-    { "wx+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
-    { "xw+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
-    { "a", O_APPEND | O_CREAT | O_WRONLY },
-    { "ax", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
-    { "xa", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
-    { "as", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
-    { "sa", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
-    { "a+", O_APPEND | O_CREAT | O_RDWR },
-    { "ax+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
-    { "xa+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
-    { "as+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
-    { "sa+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
-};
+static int
+parse_open_flags(std::string flags)
+{
+    int bits = 0;
+    for (char ch : flags) {
+        switch (ch) {
+        case 'r':
+            bits |= O_RDONLY;
+            break;
+        case 'w':
+            bits |= O_TRUNC | O_CREAT | O_WRONLY;
+            break;
+        case 'a':
+            bits |= O_APPEND | O_CREAT | O_WRONLY;
+            break;
+        case '+':
+            bits |= O_RDWR;
+            bits &= ~(O_RDONLY | O_WRONLY);
+            break;
+        case 's':
+            bits |= O_SYNC;
+            break;
+        case 'x':
+            bits |= O_EXCL;
+            break;
+        case 't':
+#ifdef O_TMPFILE
+            bits |= O_TMPFILE | O_RDWR;
+            bits &= ~(O_RDONLY | O_WRONLY);
+#else
+            LOG("FS: Unsupported O_TMPFILE " << flags);
+#endif
+            break;
+        case 'd':
+#ifdef O_DIRECT
+            bits |= O_DIRECT;
+#else
+            LOG("FS: Unsupported O_DIRECT " << flags);
+#endif
+            break;
+        default:
+            LOG("FS: Unexpected open flags " << flags);
+            return -1;
+        }
+    }
+    return bits;
+}
 
 struct Entry
 {
@@ -65,7 +88,6 @@ struct Entry
     ino_t ino;
     uint8_t type;
 };
-
 
 template <typename T>
 static Napi::Value
@@ -77,8 +99,8 @@ api(const Napi::CallbackInfo& info)
     return promise;
 }
 
-void
-set_stat_res(Napi::Object res, Napi::Env env, struct stat &stat_res)
+static void
+set_stat_res(Napi::Object res, Napi::Env env, struct stat& stat_res)
 {
     res["dev"] = Napi::Number::New(env, stat_res.st_dev);
     res["ino"] = Napi::Number::New(env, stat_res.st_ino);
@@ -91,18 +113,18 @@ set_stat_res(Napi::Object res, Napi::Env env, struct stat &stat_res)
     res["blksize"] = Napi::Number::New(env, stat_res.st_blksize);
     res["blocks"] = Napi::Number::New(env, stat_res.st_blocks);
 
-    // https://nodejs.org/dist/latest-v14.x/docs/api/fs.html#fs_stat_time_values
-    #ifdef __APPLE__
-        double atimeMs = (double(1e3) * stat_res.st_atimespec.tv_sec) + (double(1e-6) * stat_res.st_atimespec.tv_nsec);
-        double ctimeMs = (double(1e3) * stat_res.st_ctimespec.tv_sec) + (double(1e-6) * stat_res.st_ctimespec.tv_nsec);
-        double mtimeMs = (double(1e3) * stat_res.st_mtimespec.tv_sec) + (double(1e-6) * stat_res.st_mtimespec.tv_nsec);
-        double birthtimeMs = (double(1e3) * stat_res.st_birthtimespec.tv_sec) + (double(1e-6) * stat_res.st_birthtimespec.tv_nsec);
-    #else
-        double atimeMs = (double(1e3) * stat_res.st_atim.tv_sec) + (double(1e-6) * stat_res.st_atim.tv_nsec);
-        double ctimeMs = (double(1e3) * stat_res.st_ctim.tv_sec) + (double(1e-6) * stat_res.st_ctim.tv_nsec);
-        double mtimeMs = (double(1e3) * stat_res.st_mtim.tv_sec) + (double(1e-6) * stat_res.st_mtim.tv_nsec);
-        double birthtimeMs = ctimeMs; // Posix doesn't have birthtime
-    #endif
+// https://nodejs.org/dist/latest-v14.x/docs/api/fs.html#fs_stat_time_values
+#ifdef __APPLE__
+    double atimeMs = (double(1e3) * stat_res.st_atimespec.tv_sec) + (double(1e-6) * stat_res.st_atimespec.tv_nsec);
+    double ctimeMs = (double(1e3) * stat_res.st_ctimespec.tv_sec) + (double(1e-6) * stat_res.st_ctimespec.tv_nsec);
+    double mtimeMs = (double(1e3) * stat_res.st_mtimespec.tv_sec) + (double(1e-6) * stat_res.st_mtimespec.tv_nsec);
+    double birthtimeMs = (double(1e3) * stat_res.st_birthtimespec.tv_sec) + (double(1e-6) * stat_res.st_birthtimespec.tv_nsec);
+#else
+    double atimeMs = (double(1e3) * stat_res.st_atim.tv_sec) + (double(1e-6) * stat_res.st_atim.tv_nsec);
+    double ctimeMs = (double(1e3) * stat_res.st_ctim.tv_sec) + (double(1e-6) * stat_res.st_ctim.tv_nsec);
+    double mtimeMs = (double(1e3) * stat_res.st_mtim.tv_sec) + (double(1e-6) * stat_res.st_mtim.tv_nsec);
+    double birthtimeMs = ctimeMs; // Posix doesn't have birthtime
+#endif
 
     res["atimeMs"] = Napi::Number::New(env, atimeMs);
     res["ctimeMs"] = Napi::Number::New(env, ctimeMs);
@@ -112,11 +134,10 @@ set_stat_res(Napi::Object res, Napi::Env env, struct stat &stat_res)
     res["mtime"] = Napi::Date::New(env, uint64_t(round(mtimeMs)));
     res["ctime"] = Napi::Date::New(env, uint64_t(round(ctimeMs)));
     res["birthtime"] = Napi::Date::New(env, uint64_t(round(birthtimeMs)));
-
 }
 
-void
-set_statfs_res(Napi::Object res, Napi::Env env, struct statfs &statfs_res)
+static void
+set_statfs_res(Napi::Object res, Napi::Env env, struct statfs& statfs_res)
 {
     res["type"] = Napi::Number::New(env, statfs_res.f_type);
     res["bsize"] = Napi::Number::New(env, statfs_res.f_bsize);
@@ -125,7 +146,7 @@ set_statfs_res(Napi::Object res, Napi::Env env, struct statfs &statfs_res)
     res["bavail"] = Napi::Number::New(env, statfs_res.f_bavail);
     res["files"] = Napi::Number::New(env, statfs_res.f_files);
     res["ffree"] = Napi::Number::New(env, statfs_res.f_ffree);
-    // Linux, SunOS, HP-UX, 4.4BSD have a system call statfs() that returns a struct statfs (defined in <sys/vfs.h>) 
+    // Linux, SunOS, HP-UX, 4.4BSD have a system call statfs() that returns a struct statfs (defined in <sys/vfs.h>)
     // containing a fsid_t f_fsid, where fsid_t is defined as struct { int val[2]; }.
     // so it's an array of two integers
     // For now commenting out res["fsid"] as we cant use Napi::Number on it
@@ -133,11 +154,10 @@ set_statfs_res(Napi::Object res, Napi::Env env, struct statfs &statfs_res)
     // res["fsid"] = Napi::Number::New(env, statfs_res.f_fsid);
     res["flags"] = Napi::Number::New(env, statfs_res.f_flags);
 
-    #ifndef __APPLE__   
-        res["namelen"] = Napi::Number::New(env, statfs_res.f_namelen);
-        res["frsize"] = Napi::Number::New(env, statfs_res.f_frsize);
-    #endif
-
+#ifndef __APPLE__
+    res["namelen"] = Napi::Number::New(env, statfs_res.f_namelen);
+    res["frsize"] = Napi::Number::New(env, statfs_res.f_frsize);
+#endif
 }
 
 /**
@@ -267,7 +287,7 @@ struct Stat : public FSWorker
     }
     virtual void OnOK()
     {
-        DBG1("FS::Stat::OnOK: " << DVAL(_path) << DVAL(_stat_res.st_ino) << DVAL(_stat_res.st_size));    
+        DBG1("FS::Stat::OnOK: " << DVAL(_path) << DVAL(_stat_res.st_ino) << DVAL(_stat_res.st_size));
         Napi::Env env = Env();
         auto res = Napi::Object::New(env);
         set_stat_res(res, env, _stat_res);
@@ -301,7 +321,7 @@ struct LStat : public FSWorker
         Napi::Env env = Env();
         auto res = Napi::Object::New(env);
         set_stat_res(res, env, _stat_res);
-        
+
         _deferred.Resolve(res);
     }
 };
@@ -335,7 +355,6 @@ struct Statfs : public FSWorker
         _deferred.Resolve(res);
     }
 };
-
 
 /**
  * CheckAccess is an fs op
@@ -734,7 +753,6 @@ struct Fsync : public FSWorker
     }
 };
 
-
 struct FileWrap : public Napi::ObjectWrap<FileWrap>
 {
     std::string _path;
@@ -797,7 +815,8 @@ struct FileOpen : public FSWorker
     {
         _path = info[1].As<Napi::String>();
         if (info.Length() > 2 && !info[2].IsUndefined()) {
-            _flags = flags_to_case.at(info[2].As<Napi::String>());
+            _flags = parse_open_flags(info[2].As<Napi::String>());
+            if (_flags < 0) SetError("Unexpected open flags");
         }
         if (info.Length() > 3 && !info[3].IsUndefined()) {
             _mode = info[3].As<Napi::Number>().Uint32Value();
@@ -975,11 +994,11 @@ struct FileSetxattr : public FSWrapWorker<FileWrap>
     {
         int fd = _wrap->_fd;
         for (auto it = _md.begin(); it != _md.end(); ++it) {
-            #ifdef __APPLE__
-                auto r = fsetxattr(fd, it->first.c_str(), it->second.c_str(), it->second.length(), 0, 0);
-            #else
-                auto r = fsetxattr(fd, it->first.c_str(), it->second.c_str(), it->second.length(), 0);
-            #endif
+#ifdef __APPLE__
+            auto r = fsetxattr(fd, it->first.c_str(), it->second.c_str(), it->second.length(), 0, 0);
+#else
+            auto r = fsetxattr(fd, it->first.c_str(), it->second.c_str(), it->second.length(), 0);
+#endif
             if (r == -1) {
                 SetSyscallError();
                 return;
@@ -1009,13 +1028,13 @@ struct FileGetxattr : public FSWrapWorker<FileWrap>
         }
         auto start_ctime = stat_res.st_ctime;
 
-        #ifdef __APPLE__
-            ssize_t buf_len = flistxattr(fd, NULL, 0, 0);
-        #else
-            ssize_t buf_len = flistxattr(fd, NULL, 0);
-        #endif
+#ifdef __APPLE__
+        ssize_t buf_len = flistxattr(fd, NULL, 0, 0);
+#else
+        ssize_t buf_len = flistxattr(fd, NULL, 0);
+#endif
 
-        // No xattr, nothing to do  
+        // No xattr, nothing to do
         if (buf_len == 0) return;
 
         if (buf_len == -1) {
@@ -1025,11 +1044,11 @@ struct FileGetxattr : public FSWrapWorker<FileWrap>
 
         Buf buf(buf_len);
 
-        #ifdef __APPLE__
-            buf_len = flistxattr(fd, buf.cdata(), buf_len, 0);
-        #else
-            buf_len = flistxattr(fd, buf.cdata(), buf_len);
-        #endif
+#ifdef __APPLE__
+        buf_len = flistxattr(fd, buf.cdata(), buf_len, 0);
+#else
+        buf_len = flistxattr(fd, buf.cdata(), buf_len);
+#endif
 
         if (buf_len == -1) {
             SetSyscallError();
@@ -1039,11 +1058,11 @@ struct FileGetxattr : public FSWrapWorker<FileWrap>
         while (buf.length()) {
             std::string key(buf.cdata());
 
-            #ifdef __APPLE__
-                ssize_t value_len = fgetxattr(fd, key.c_str(), NULL, 0, 0, 0);
-            #else
-                ssize_t value_len = fgetxattr(fd, key.c_str(), NULL, 0);
-            #endif
+#ifdef __APPLE__
+            ssize_t value_len = fgetxattr(fd, key.c_str(), NULL, 0, 0, 0);
+#else
+            ssize_t value_len = fgetxattr(fd, key.c_str(), NULL, 0);
+#endif
 
             if (value_len == -1) {
                 SetSyscallError();
@@ -1053,17 +1072,17 @@ struct FileGetxattr : public FSWrapWorker<FileWrap>
             if (value_len > 0) {
                 Buf val(value_len);
 
-                #ifdef __APPLE__
-                    value_len = fgetxattr(fd, key.c_str(), val.cdata(), value_len, 0, 0);
-                #else
-                    value_len = fgetxattr(fd, key.c_str(), val.cdata(), value_len);
-                #endif
+#ifdef __APPLE__
+                value_len = fgetxattr(fd, key.c_str(), val.cdata(), value_len, 0, 0);
+#else
+                value_len = fgetxattr(fd, key.c_str(), val.cdata(), value_len);
+#endif
 
                 if (value_len == -1) {
                     SetSyscallError();
                     return;
                 }
-                
+
                 _md[key] = std::string(val.cdata(), value_len);
             } else if (value_len == 0) {
                 _md[key] = "";
@@ -1121,7 +1140,7 @@ struct FileStat : public FSWrapWorker<FileWrap>
         Napi::Env env = Env();
         auto res = Napi::Object::New(env);
         set_stat_res(res, env, _stat_res);
-        
+
         _deferred.Resolve(res);
     }
 };
@@ -1159,7 +1178,8 @@ struct RealPath : public FSWorker
         Begin(XSTR() << DVAL(_path));
     }
 
-    ~RealPath() {
+    ~RealPath()
+    {
         if (_full_path) {
             free(_full_path);
             _full_path = 0;
@@ -1232,7 +1252,7 @@ FileWrap::fsync(const Napi::CallbackInfo& info)
 }
 
 /**
- * 
+ *
  */
 struct DirWrap : public Napi::ObjectWrap<DirWrap>
 {
@@ -1335,21 +1355,21 @@ struct DirReadEntry : public FSWrapWorker<DirWrap>
         }
         struct dirent* e = 0;
 
-        // loop to skip parent and current directories 
-        do { 
-            // need to set errno before the call to readdir() to detect between EOF and error 
-            errno = 0; 
-            e = readdir(dir); 
-        } while (e && (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)); 
-        if (e) { 
-            _entry.name = std::string(e->d_name); 
-            _entry.ino = e->d_ino; 
-            _entry.type = e->d_type; 
-        } else { 
-            if (errno) { 
-                SetSyscallError(); 
-            } else { 
-                _eof = true; 
+        // loop to skip parent and current directories
+        do {
+            // need to set errno before the call to readdir() to detect between EOF and error
+            errno = 0;
+            e = readdir(dir);
+        } while (e && (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0));
+        if (e) {
+            _entry.name = std::string(e->d_name);
+            _entry.ino = e->d_ino;
+            _entry.type = e->d_type;
+        } else {
+            if (errno) {
+                SetSyscallError();
+            } else {
+                _eof = true;
             }
         }
     }
@@ -1380,13 +1400,36 @@ DirWrap::read(const Napi::CallbackInfo& info)
     return api<DirReadEntry>(info);
 }
 
-Napi::Value
+static Napi::Value
 set_debug_level(const Napi::CallbackInfo& info)
 {
     int level = info[0].As<Napi::Number>();
     LOG("FS::set_debug_level " << level);
     DBG_SET_LEVEL(level);
     return info.Env().Undefined();
+}
+
+static const int DIO_BUFFER_MEMALIGN = 4096;
+
+static void
+dio_buffer_free(Napi::Env env, uint8_t* buf)
+{
+    if (buf) free(buf);
+}
+
+/**
+ * Allocate memory aligned buffer for direct IO.
+ */
+static Napi::Value
+dio_buffer_alloc(const Napi::CallbackInfo& info)
+{
+    int size = info[0].As<Napi::Number>();
+    uint8_t* buf = 0;
+    int r = posix_memalign((void**)&buf, DIO_BUFFER_MEMALIGN, size);
+    if (r || !buf) {
+        throw Napi::Error::New(info.Env(), "FS::dio_buffer_alloc: failed to allocate memory");
+    }
+    return Napi::Buffer<uint8_t>::New(info.Env(), buf, size, dio_buffer_free);
 }
 
 void
@@ -1424,6 +1467,14 @@ fs_napi(Napi::Env env, Napi::Object exports)
     exports_fs["DT_LNK"] = Napi::Number::New(env, DT_LNK);
     exports_fs["PLATFORM_IOV_MAX"] = Napi::Number::New(env, IOV_MAX);
 
+#ifdef O_DIRECT
+    exports_fs["O_DIRECT"] = Napi::Number::New(env, O_DIRECT);
+#endif
+#ifdef O_TMPFILE
+    exports_fs["O_TMPFILE"] = Napi::Number::New(env, O_TMPFILE);
+#endif
+
+    exports_fs["dio_buffer_alloc"] = Napi::Function::New(env, dio_buffer_alloc);
     exports_fs["set_debug_level"] = Napi::Function::New(env, set_debug_level);
 
     exports["fs"] = exports_fs;

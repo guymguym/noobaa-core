@@ -29,7 +29,8 @@ const buffers_pool_sem = new Semaphore(config.NSFS_BUF_POOL_MEM_LIMIT, {
 const buffers_pool = new buffer_utils.BuffersPool({
     buf_size: config.NSFS_BUF_SIZE,
     sem: buffers_pool_sem,
-    warning_timeout: config.NSFS_BUF_POOL_WARNING_TIMEOUT
+    warning_timeout: config.NSFS_BUF_POOL_WARNING_TIMEOUT,
+    buffer_alloc: size => nb_native().fs.dio_buffer_alloc(size),
 });
 
 const XATTR_USER_PREFIX = 'user.';
@@ -507,7 +508,7 @@ class NamespaceFS {
             const file_path = this._get_file_path(params);
             await this._check_path_in_bucket_boundaries(fs_account_config, file_path);
             await this._load_bucket(params, fs_account_config);
-            file = await nb_native().fs.open(fs_account_config, file_path, undefined, get_umasked_mode(config.BASE_MODE_FILE));
+            file = await nb_native().fs.open(fs_account_config, file_path, config.NSFS_OPEN_READ_MODE, get_umasked_mode(config.BASE_MODE_FILE));
             const stat = await file.stat(fs_account_config);
             if (isDirectory(stat)) throw Object.assign(new Error('NoSuchKey'), { code: 'ENOENT' });
             const fs_xattr = await file.getxattr(fs_account_config);
@@ -551,7 +552,7 @@ class NamespaceFS {
             file_path = this._get_file_path(params);
             await this._check_path_in_bucket_boundaries(fs_account_config, file_path);
             await this._fail_if_archived_or_sparse_file(fs_account_config, file_path);
-            file = await nb_native().fs.open(fs_account_config, file_path, undefined, get_umasked_mode(config.BASE_MODE_FILE));
+            file = await nb_native().fs.open(fs_account_config, file_path, config.NSFS_OPEN_READ_MODE, get_umasked_mode(config.BASE_MODE_FILE));
 
             const start = Number(params.start) || 0;
             const end = isNaN(Number(params.end)) ? Infinity : Number(params.end);
@@ -774,7 +775,7 @@ class NamespaceFS {
             let MD5Async =
                 config.NSFS_CALCULATE_MD5 && !(fs_xattr && fs_xattr[XATTR_MD5_KEY]) ? new (nb_native().crypto.MD5Async)() : undefined;
             //Opening the source and target files
-            source_file = await nb_native().fs.open(fs_account_config, source_file_path);
+            source_file = await nb_native().fs.open(fs_account_config, source_file_path, config.NSFS_OPEN_READ_MODE);
             target_file = await nb_native().fs.open(fs_account_config, upload_path, 'w');
             //Reading the source_file and writing into the target_file
             let read_pos = 0;
@@ -980,7 +981,7 @@ class NamespaceFS {
             for (const { num, etag } of multiparts) {
                 const part_path = path.join(params.mpu_path, `part-${num}`);
                 const part_stat = await nb_native().fs.stat(fs_account_config, part_path);
-                read_file = await nb_native().fs.open(fs_account_config, part_path, undefined, get_umasked_mode(config.BASE_MODE_FILE));
+                read_file = await nb_native().fs.open(fs_account_config, part_path, config.NSFS_OPEN_READ_MODE, get_umasked_mode(config.BASE_MODE_FILE));
                 // Assuming that a every multipart upload object uses the same NSFS_CALCULATE_MD5 configuration
                 const fs_xattr = MD5Async ? await read_file.getxattr(fs_account_config) : undefined;
                 // TODO: Should we seperate to two cases and save the open if we do not use NSFS_CALCULATE_MD5?
@@ -1185,7 +1186,7 @@ class NamespaceFS {
     async _get_fs_xattr_from_path(fs_account_config, file_path) {
         let file;
         try {
-            file = await nb_native().fs.open(fs_account_config, file_path, undefined, get_umasked_mode(config.BASE_MODE_FILE));
+            file = await nb_native().fs.open(fs_account_config, file_path, config.NSFS_OPEN_READ_MODE, get_umasked_mode(config.BASE_MODE_FILE));
             const fs_xattr = await file.getxattr(fs_account_config);
             await file.close(fs_account_config);
             file = null;
