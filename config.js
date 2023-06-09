@@ -577,8 +577,9 @@ config.NSFS_UMASK = 0o007;
 // The threshold in milliseconds for prompting a warning
 config.NSFS_WARN_THRESHOLD_MS = 100;
 
+config.NSFS_CHECK_BUCKET_BOUNDARIES = false;
 config.NSFS_CALCULATE_MD5 = false;
-config.NSFS_TRIGGER_FSYNC = true;
+config.NSFS_TRIGGER_FSYNC = false;
 config.NSFS_REMOVE_PARTS_ON_COMPLETE = true;
 
 config.NSFS_BUF_POOL_WARNING_TIMEOUT = 2 * 60 * 1000;
