@@ -9,14 +9,24 @@ const config = require('../../../../config');
  * http://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectDELETE.html
  */
 async function delete_object(req, res) {
-    const del_res = await req.object_sdk.delete_object({
-        bucket: req.params.bucket,
-        key: req.params.key,
-        version_id: req.query.versionId,
-        md_conditions: http_utils.get_md_conditions(req),
-        bypass_governance: config.WORM_ENABLED ? req.headers['x-amz-bypass-governance-retention'] &&
+    let del_res;
+    try {
+        del_res = await req.object_sdk.delete_object({
+            bucket: req.params.bucket,
+            key: req.params.key,
+            version_id: req.query.versionId,
+            md_conditions: http_utils.get_md_conditions(req),
+            bypass_governance: config.WORM_ENABLED ? req.headers['x-amz-bypass-governance-retention'] &&
             req.headers['x-amz-bypass-governance-retention'].toUpperCase() === 'TRUE' : undefined,
-    });
+        });
+    } catch (err) {
+        if (err.code === 'NoSuchKey' || err.core === 'ENOENT' || err.rpc_code === 'NO_SUCH_OBJECT') {
+            // delete should not fail on non existing object
+            del_res = {};
+        } else {
+            throw err;
+        }
+    }
     if (req.query.versionId) {
         res.setHeader('x-amz-version-id', req.query.versionId);
         if (del_res.deleted_delete_marker) {

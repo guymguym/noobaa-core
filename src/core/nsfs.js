@@ -14,6 +14,7 @@ const nb_native = require('../util/nb_native');
 const ObjectSDK = require('../sdk/object_sdk');
 const NamespaceFS = require('../sdk/namespace_fs');
 const BucketSpaceFS = require('../sdk/bucketspace_fs');
+const SensitiveString = require('../util/sensitive_string');
 
 const HELP = `
 Help:
@@ -141,7 +142,20 @@ function init_request_sdk(req, res, fs_root, fs_config) {
     object_sdk.read_bucket_sdk_website_info = noop;
     object_sdk.read_bucket_sdk_namespace_info = noop;
     object_sdk.read_bucket_sdk_caching_info = noop;
-    object_sdk.read_bucket_sdk_policy_info = noop;
+    // object_sdk.read_bucket_sdk_policy_info = noop;
+    object_sdk.read_bucket_sdk_policy_info = async bucket_name => ({
+        s3_policy: {
+            version: '2012-10-17',
+            statement: [{
+                effect: 'allow',
+                action: ['*'],
+                resource: ['*'],
+                principal: [new SensitiveString('*')],
+            }]
+        },
+        system_owner: new SensitiveString('nsfs'),
+        bucket_owner: new SensitiveString('nsfs'),
+    });
     object_sdk.read_bucket_usage_info = noop;
     object_sdk.requesting_account = {
         nsfs_account_config: fs_config
