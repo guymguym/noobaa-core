@@ -1126,15 +1126,34 @@ class NamespaceFS {
     // OBJECT DELETE //
     ///////////////////
 
+    async _delete_object(fs_context, file_path) {
+
+        dbg.log0('NamespaceFS: _delete_object', file_path);
+        await this._check_path_in_bucket_boundaries(fs_context, file_path);
+
+        try {
+            await nb_native().fs.unlink(fs_context, file_path);
+        } catch (err) {
+            if (err.code !== 'ENOENT') {
+                dbg.log0(`NamespaceFS: _delete_object`,
+                    `unlink ${file_path} failed (ignored)`, err);
+            }
+        }
+
+        try {
+            await this._delete_path_dirs(file_path, fs_context);
+        } catch (err) {
+            dbg.log0(`NamespaceFS: delete_multiple_objects`,
+                `_delete_path_dirs ${file_path} failed (ignored)`, err);
+        }
+    }
+
     async delete_object(params, object_sdk) {
         try {
             const fs_context = this.prepare_fs_context(object_sdk);
             await this._load_bucket(params, fs_context);
             const file_path = this._get_file_path(params);
-            await this._check_path_in_bucket_boundaries(fs_context, file_path);
-            dbg.log0('NamespaceFS: delete_object', file_path);
-            await nb_native().fs.unlink(fs_context, file_path);
-            await this._delete_path_dirs(file_path, fs_context);
+            await this._delete_object(fs_context, file_path);
             return {};
         } catch (err) {
             throw this._translate_object_error_codes(err);
@@ -1147,10 +1166,7 @@ class NamespaceFS {
             await this._load_bucket(params, fs_context);
             for (const { key } of params.objects) {
                 const file_path = this._get_file_path({ key });
-                await this._check_path_in_bucket_boundaries(fs_context, file_path);
-                dbg.log0('NamespaceFS: delete_multiple_objects', file_path);
-                await nb_native().fs.unlink(fs_context, file_path);
-                await this._delete_path_dirs(file_path, fs_context);
+                await this._delete_object(fs_context, file_path);
             }
             // TODO return deletion reponse per key
             return params.objects.map(() => ({}));
