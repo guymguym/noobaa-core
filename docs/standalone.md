@@ -271,6 +271,13 @@ export AWS_ACCESS_KEY_ID=$(npm -- run api account read_account '{}' --json | tai
 export AWS_SECRET_ACCESS_KEY=$(npm -- run api account read_account '{}' --json | tail -1 | jq -r '.access_keys[0].secret_key')
 ```
 
+### Make aliases for ease of use
+
+```sh
+alias s3='aws --endpoint http://localhost:6001 s3'
+alias s3api='aws --endpoint http://localhost:6001 s3api'
+```
+
 ### Create bucket
 
 ```sh
