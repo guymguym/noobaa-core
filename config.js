@@ -714,6 +714,12 @@ config.TIERING_TTL_MS = 30 * 60 * 1000; // 30 minutes
 //                 //
 /////////////////////
 
+function clog(...args) {
+    if (process.env.QUIET_CONFIG_LOGS !== 'true') {
+        console.warn(...args);
+    }
+}
+
 // load a local config file that overwrites some of the config
 function load_config_local() {
     try {
@@ -723,7 +729,7 @@ function load_config_local() {
         // eslint-disable-next-line global-require
         const local_config = require(path.join(process.cwd(), 'config-local'));
         if (!local_config) return;
-        console.warn('load_config_local: LOADED', local_config);
+        clog('load_config_local:', local_config);
         if (typeof local_config === 'function') {
             const local_config_func = /** @type {function} */ (local_config);
             local_config_func(config);
@@ -751,34 +757,34 @@ function load_config_env_overrides() {
             if (type === 'number') {
                 const n = Number(val);
                 if (isNaN(n)) throw new Error(`config: ${conf_name}=${val} should be a number`);
-                console.warn(`config: ENV OVERRIDE ${conf_name}=${n} (number)`);
+                clog(`config: ENV OVERRIDE ${conf_name}=${n} (number)`);
                 config[conf_name] = n;
 
             } else if (type === 'boolean') {
                 if (val === 'true') {
-                    console.warn(`config: ENV OVERRIDE ${conf_name}=true (bool)`);
+                    clog(`config: ENV OVERRIDE ${conf_name}=true (bool)`);
                     config[conf_name] = true;
                 } else if (val === 'false') {
-                    console.warn(`config: ENV OVERRIDE ${conf_name}=false (bool)`);
+                    clog(`config: ENV OVERRIDE ${conf_name}=false (bool)`);
                     config[conf_name] = false;
                 } else {
                     throw new Error(`config: ${conf_name}=${val} should be true|false`);
                 }
 
             } else if (type === 'string' || type === 'undefined') {
-                console.warn(`config: ENV OVERRIDE ${conf_name}=${val} (string)`);
+                clog(`config: ENV OVERRIDE ${conf_name}=${val} (string)`);
                 config[conf_name] = val;
 
             } else if (type === 'object') {
                 // TODO: Validation checks, more complex type casting for values if needed
                 config[conf_name] = Array.isArray(prev_val) ? val.split(',') : JSON.parse(val);
-                console.warn(`config: ENV OVERRIDE ${conf_name}=${val} (object of type ${Array.isArray(prev_val) ? 'array' : 'json'})`);
+                clog(`config: ENV OVERRIDE ${conf_name}=${val} (object of type ${Array.isArray(prev_val) ? 'array' : 'json'})`);
             } else {
-                console.warn(`config: Unknown type or mismatch between existing ${type} and provided type for ${conf_name}=${val}, skipping ...`);
+                clog(`config: Unknown type or mismatch between existing ${type} and provided type for ${conf_name}=${val}, skipping ...`);
             }
 
         } catch (err) {
-            console.warn(`config: failed to load "${key}"`, err);
+            clog(`config: failed to load "${key}"`, err);
         }
     }
 }
