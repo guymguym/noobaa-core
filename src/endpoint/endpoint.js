@@ -336,6 +336,7 @@ function unavailable_handler(req, res) {
 }
 
 function listen_http(port, server) {
+    if (port < 0) return;
     return new Promise((resolve, reject) => {
         setup_http_server(server);
         server.listen(port, err => {

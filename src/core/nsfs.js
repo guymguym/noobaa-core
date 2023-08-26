@@ -103,6 +103,7 @@ async function main(argv = minimist(process.argv.slice(2))) {
         await endpoint.start_endpoint({
             http_port,
             https_port,
+            https_port_sts: -1,
             init_request_sdk: (req, res) => init_request_sdk(req, res, fs_root, fs_config, versioning),
         });
 
@@ -153,9 +154,9 @@ function init_request_sdk(req, res, fs_root, fs_config, versioning) {
                 statement: [
                 {
                     effect: 'allow',
-                    action: [ 's3:*' ],
+                    action: [ '*' ],
+                    resource: [ '*' ],
                     principal: [ new SensitiveString('*')],
-                    resource: [ `arn:aws:s3:::${bucket_name}/*` ]
                 }]
         },
         system_owner: undefined,
