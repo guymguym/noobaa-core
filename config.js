@@ -9,7 +9,6 @@ var config = exports;
 const os = require('os');
 const fs = require('fs');
 const assert = require('assert');
-const dbg = require('./src/util/debug_module')(__filename);
 
 /////////////////////////
 // CONTAINER RESOURCES //
@@ -116,9 +115,9 @@ config.S3_MD_SIZE_LIMIT = 2 * 1024;
 // SECRETS CONFIG  //
 /////////////////////
 
-config.JWT_SECRET = process.env.JWT_SECRET || _get_data_from_file(`/etc/noobaa-server/jwt`);
-config.SERVER_SECRET = process.env.SERVER_SECRET || _get_data_from_file(`/etc/noobaa-server/server_secret`);
-config.NOOBAA_AUTH_TOKEN = process.env.NOOBAA_AUTH_TOKEN || _get_data_from_file(`/etc/noobaa-auth-token/auth_token`);
+config.JWT_SECRET = process.env.JWT_SECRET || _read_config_from_file(`/etc/noobaa-server/jwt`);
+config.SERVER_SECRET = process.env.SERVER_SECRET || _read_config_from_file(`/etc/noobaa-server/server_secret`);
+config.NOOBAA_AUTH_TOKEN = process.env.NOOBAA_AUTH_TOKEN || _read_config_from_file(`/etc/noobaa-auth-token/auth_token`);
 
 ///////////////
 // MD CONFIG //
@@ -627,25 +626,32 @@ config.POSTGRES_MAX_CLIENTS = (process.env.LOCAL_MD_SERVER === 'true') ? 80 : 10
 //                 //
 /////////////////////
 
+const config_local_path = require('path').resolve(
+    process.env.CONFIG_LOCAL_PATH || 'config-local.js'
+);
+
 // load a local config file that overwrites some of the config
 function load_config_local() {
     try {
-        // eslint-disable-next-line global-require
-        const local_config = require('./config-local');
-        if (!local_config) return;
-        console.log('load_config_local: LOADED', local_config);
-        if (typeof local_config === 'function') {
-            const local_config_func = /** @type {function} */ (local_config);
-            local_config_func(config);
-        } else if (typeof local_config === 'object') {
-            const local_config_obj = /** @type {object} */ (local_config);
-            Object.assign(config, local_config_obj);
-        } else {
-            throw new Error(`Expected object or function to be exported from config-local - ${typeof local_config}`);
-        }
+        require(config_local_path);
+        console.log('load_config_local: LOADED');
     } catch (err) {
-        if (err.code !== 'MODULE_NOT_FOUND') throw err;
+        if (err.code !== 'MODULE_NOT_FOUND' && err.code !== 'ENOENT') throw err;
         console.log('load_config_local: NO LOCAL CONFIG');
+    }
+}
+
+function reload_config_local() {
+    try {
+        // use `watchFile()` and not `watch()` because we want stat polling
+        // to allow the file to be missing and then added on runtime.
+        fs.watchFile(config_local_path, { interval: 10007 }, () => {
+            console.log('reload_config_local: RELOAD', config_local_path);
+            delete require.cache[config_local_path];
+            load_config_local();
+        }).unref();
+    } catch (err) {
+        console.log('reload_config_local: FAILED TO WATCH FILE', config_local_path, err);
     }
 }
 
@@ -694,16 +700,21 @@ function load_config_env_overrides() {
     }
 }
 
-function _get_data_from_file(file_name) {
-    let data;
+/**
+ * @param {string} file_name
+ * @returns {string|undefined}
+ */
+function _read_config_from_file(file_name) {
     try {
-        data = fs.readFileSync(file_name).toString();
-    } catch (e) {
-        dbg.log1(`Error accrued while getting the data from ${file_name}: ${e}`);
-        return;
+        return fs.readFileSync(file_name, 'utf8');
+    } catch (err) {
+        if (err.code !== 'ENOENT') {
+            console.warn(`read_config_from_file: failed to read ${file_name}`, err);
+        }
+        return undefined;
     }
-    return data;
 }
 
-load_config_local();
 load_config_env_overrides();
+load_config_local();
+reload_config_local();
