@@ -145,7 +145,9 @@ module.exports = {
                 $ref: '#/definitions/account_info'
             },
             auth: {
-                system: false
+                account: false,
+                system: false,
+                anonymous: true,
             }
         },
 
