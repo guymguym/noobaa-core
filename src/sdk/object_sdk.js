@@ -18,7 +18,7 @@ const NamespaceFS = require('./namespace_fs');
 const NamespaceS3 = require('./namespace_s3');
 const NamespaceGCP = require('./namespace_gcp');
 const NamespaceBlob = require('./namespace_blob');
-const NamespaceMerge = require('./namespace_merge');
+const NamespaceMulti = require('./namespace_multi');
 const NamespaceCache = require('./namespace_cache');
 const NamespaceMultipart = require('./namespace_multipart');
 const NamespaceNetStorage = require('./namespace_net_storage');
@@ -289,9 +289,9 @@ class ObjectSDK {
                         valid_until: time + config.OBJECT_SDK_BUCKET_CACHE_EXPIRY_MS,
                     };
                 }
-                // MERGE NAMESPACE
+                // MULTI NAMESPACE
                 return {
-                    ns: this._setup_merge_namespace(bucket),
+                    ns: this._setup_multi_namespace(bucket),
                     bucket,
                     valid_until: time + config.OBJECT_SDK_BUCKET_CACHE_EXPIRY_MS,
                 };
@@ -309,11 +309,11 @@ class ObjectSDK {
         };
     }
 
-    _setup_merge_namespace(bucket) {
+    _setup_multi_namespace(bucket) {
         let rr = _.cloneDeep(bucket.namespace.read_resources);
         /** @type {nb.Namespace} */
         let wr = bucket.namespace.write_resource && this._setup_single_namespace(_.extend({}, bucket.namespace.write_resource));
-        if (MULTIPART_NAMESPACES.includes(bucket.namespace.write_resource.resource.endpoint_type)) {
+        if (MULTIPART_NAMESPACES.includes(bucket.namespace.write_resource?.resource.endpoint_type)) {
             const wr_index = rr.findIndex(r => _.isEqual(r, bucket.namespace.write_resource.resource));
             wr = new NamespaceMultipart(
                 this._setup_single_namespace(_.extend({}, bucket.namespace.write_resource)),
@@ -324,7 +324,7 @@ class ObjectSDK {
             });
         }
 
-        return new NamespaceMerge({
+        return new NamespaceMulti({
             namespaces: {
                 write_resource: wr,
                 read_resources: _.map(rr, ns_info => (

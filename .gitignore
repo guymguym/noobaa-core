@@ -29,3 +29,6 @@
 .DS_Store
 # custom ignored files - use .IGNORE or any prefix.IGNORE dir/file name to remove from git
 *.IGNORE 
+
+/primary
+/secondary

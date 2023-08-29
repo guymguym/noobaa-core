@@ -13,6 +13,7 @@ const nscache_cmd = require('./nscache');
 const CORE_COMMANDS = Object.freeze({
     nsfs: nsfs_cmd,
     nscache: nscache_cmd,
+    nsmulti: require('./nsmulti'),
 });
 
 const HELP = `

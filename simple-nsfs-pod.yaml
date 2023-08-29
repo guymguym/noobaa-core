@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nsfs
+spec:
+  selector:
+    name: nsfs
+  clusterIP: None
+  ports:
+  - name: http
+    port: 6001
+  - name: https
+    port: 6443
+  - name: metrics
+    port: 7001
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nsfs
+  labels:
+    name: nsfs
+spec:
+  containers:
+  - name: nsfs
+    image: guymguym/noobaa-core:5.13-ns-multi-write
+    env:
+      - name: UV_THREADPOOL_SIZE
+        value: "8"
+    command:
+      - "/bin/bash"
+      - "-c"
+      - |
+        cd /root/node_modules/noobaa-core
+        node -- src/core/nsfs /nsfs --debug 2
+    ports:
+      - containerPort: 6001
+      - containerPort: 6443
+      - containerPort: 7001
+    resources:
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+      requests:
+        cpu: "500m"
+        memory: "500Mi"
+    volumeMounts:
+    - mountPath: /nsfs
+      name: nsfs-volume
+  volumes:
+  - name: nsfs-volume
+    emptyDir:
+      sizeLimit: 4Gi

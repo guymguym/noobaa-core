@@ -732,6 +732,15 @@ interface ObjectSDK {
     [key: string]: any;
 }
 
+interface NamespaceListResult {
+    objects: ObjectInfo[];
+    common_prefixes: string[];
+    is_truncated: boolean;
+    next_marker?: string;
+    next_version_id_marker?: string;
+    next_upload_id_marker?: string;
+}
+
 interface Namespace {
 
     is_server_side_copy(other: Namespace, params: object): boolean;
@@ -739,9 +748,9 @@ interface Namespace {
     get_write_resource(): Namespace;
     get_bucket(): string;
 
-    list_objects(params: object, object_sdk: ObjectSDK): Promise<any>;
-    list_uploads(params: object, object_sdk: ObjectSDK): Promise<any>;
-    list_object_versions(params: object, object_sdk: ObjectSDK): Promise<any>;
+    list_objects(params: object, object_sdk: ObjectSDK): Promise<NamespaceListResult>;
+    list_uploads(params: object, object_sdk: ObjectSDK): Promise<NamespaceListResult>;
+    list_object_versions(params: object, object_sdk: ObjectSDK): Promise<NamespaceListResult>;
 
     read_object_md(params: object, object_sdk: ObjectSDK): Promise<ObjectInfo>;
     read_object_stream(params: object, object_sdk: ObjectSDK, res?: Writable): Promise<Readable>;

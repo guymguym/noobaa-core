@@ -180,14 +180,16 @@ async function create_bucket(req) {
             if (!write_resource) {
                 dbg.log0('write resource was not provided, will create a readonly namespace bucket');
             }
-            if (req.rpc_params.namespace.read_resources &&
-                (!read_resources.length ||
-                    (read_resources.length !== req.rpc_params.namespace.read_resources.length)
-                )) {
-                throw new RpcError('INVALID_READ_RESOURCES');
-            }
-            if (req.rpc_params.namespace.write_resource.resource && !write_resource) {
-                throw new RpcError('INVALID_WRITE_RESOURCES');
+            if (!config.NAMESPACE_MULTI_WRITE_HACK) {
+                if (req.rpc_params.namespace.read_resources &&
+                    (!read_resources.length ||
+                        (read_resources.length !== req.rpc_params.namespace.read_resources.length)
+                    )) {
+                    throw new RpcError('INVALID_READ_RESOURCES');
+                }
+                if (req.rpc_params.namespace.write_resource.resource && !write_resource) {
+                    throw new RpcError('INVALID_WRITE_RESOURCES');
+                }
             }
 
             const caching = req.rpc_params.namespace.caching && {
@@ -640,25 +642,33 @@ function get_bucket_changes_versioning(req, bucket, update_request, single_bucke
 
 function get_bucket_changes_namespace(req, bucket, update_request, single_bucket_update) {
     if (!bucket.namespace) throw new RpcError('CANNOT_CONVERT_BUCKET_TO_NAMESPACE_BUCKET');
-    if (!update_request.namespace.read_resources.length) throw new RpcError('INVALID_READ_RESOURCES');
+    if (!config.NAMESPACE_MULTI_WRITE_HACK) {
+        if (!update_request.namespace.read_resources.length) throw new RpcError('INVALID_READ_RESOURCES');
+    }
 
     const read_resources = _.compact(update_request.namespace.read_resources
         .map(nsr => {
             const res = req.system.namespace_resources_by_name && req.system.namespace_resources_by_name[nsr.resource];
             return res && { resource: res._id, path: nsr.path };
         }));
-    if (!read_resources.length || (read_resources.length !== update_request.namespace.read_resources.length)) {
-        throw new RpcError('INVALID_READ_RESOURCES');
+    if (!config.NAMESPACE_MULTI_WRITE_HACK) {
+        if (!read_resources.length || (read_resources.length !== update_request.namespace.read_resources.length)) {
+            throw new RpcError('INVALID_READ_RESOURCES');
+        }
     }
     _.set(single_bucket_update, 'namespace.read_resources', read_resources);
     const wr_obj = req.system.namespace_resources_by_name &&
         req.system.namespace_resources_by_name[update_request.namespace.write_resource.resource];
     const write_resource = wr_obj && { resource: wr_obj._id, path: update_request.namespace.write_resource.path };
-    if (!write_resource) throw new RpcError('INVALID_WRITE_RESOURCES');
+    if (!config.NAMESPACE_MULTI_WRITE_HACK) {
+        if (!write_resource) throw new RpcError('INVALID_WRITE_RESOURCES');
+    }
     _.set(single_bucket_update, 'namespace.write_resource', write_resource);
-    // _.find in opposed to _.includes does a correct search for objects in array
-    if (!_.find(update_request.namespace.read_resources, update_request.namespace.write_resource)) {
-        throw new RpcError('INVALID_NAMESPACE_CONFIGURATION');
+    if (!config.NAMESPACE_MULTI_WRITE_HACK) {
+        // _.find in opposed to _.includes does a correct search for objects in array
+        if (!_.find(update_request.namespace.read_resources, update_request.namespace.write_resource)) {
+            throw new RpcError('INVALID_NAMESPACE_CONFIGURATION');
+        }
     }
 
     // reorder read resources so that the write resource is the first in the list

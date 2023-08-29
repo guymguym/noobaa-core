@@ -1,0 +1,40 @@
+{
+    "write_resource": {
+        "resource": {
+            "name": "logs",
+            "target_bucket": "logs",
+            "endpoint": "https://localhost:6444",
+            "endpoint_type": "S3_COMPATIBLE",
+            "access_mode": "READ_WRITE",
+            "auth_method": "AWS_V4",
+            "access_key": "nsfs",
+            "secret_key": "nsfs"
+        }
+    },
+    "read_resources": [
+        {
+            "resource": {
+                "name": "logs",
+                "target_bucket": "logs",
+                "endpoint": "https://localhost:6444",
+                "endpoint_type": "S3_COMPATIBLE",
+                "access_mode": "READ_WRITE",
+                "auth_method": "AWS_V4",
+                "access_key": "nsfs",
+                "secret_key": "nsfs"
+            }
+        },
+        {
+            "resource": {
+                "name": "logs2",
+                "target_bucket": "logs2",
+                "endpoint": "https://localhost:6444",
+                "endpoint_type": "S3_COMPATIBLE",
+                "access_mode": "READ_WRITE",
+                "auth_method": "AWS_V4",
+                "access_key": "nsfs",
+                "secret_key": "nsfs"
+            }
+        }
+    ]
+}
