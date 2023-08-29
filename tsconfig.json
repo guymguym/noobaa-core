@@ -6,6 +6,7 @@
     "noEmit": true,
     "checkJs": true,
     "allowJs": true,
+    "esModuleInterop": true,
   },
   "include": [
     "src"
