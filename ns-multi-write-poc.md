@@ -150,6 +150,19 @@ Create deployment -
 kubectl apply -f ns-multi-write-deploy.yaml
 ```
 
+Start port forwarding in the background to test -
+```sh
+kubectl port-forward service/s3 6001:80
+```
+
+Use the port forwarded endpoint -
+```sh
+aws --endpoint http://localhost:6001 s3 ls
+aws --endpoint http://localhost:6001 s3 ls s3://test-bucket
+aws --endpoint http://localhost:6001 s3 cp --recursive DIR_TO_UPLOAD s3://test-bucket
+aws --endpoint http://localhost:6001 s3 ls s3://test-bucket
+```
+
 Change to failover mode -
 ```sh
 kubectl set env deploy/ns-multi-write MODE=failover
