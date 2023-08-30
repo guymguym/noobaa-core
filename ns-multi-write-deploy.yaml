@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: s3
+spec:
+  type: LoadBalancer
+  selector:
+    app: ns-multi-write
+  ports:
+  - name: http
+    port: 80
+    targetPort: 6001
+  - name: https
+    port: 443
+    targetPort: 6443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ns-multi-write
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ns-multi-write
+  template:
+    metadata:
+      labels:
+        app: ns-multi-write
+    spec:
+      containers:
+      - name: ns-multi-write
+        image: guymguym/noobaa-core:5.13-ns-multi-write
+        env:
+          - name: MODE
+            value: "normal" # change me to 'failover'
+        command:
+          - "/bin/bash"
+          - "-c"
+          - |
+            cd /root/node_modules/noobaa-core
+            node -- src/core/nsmulti /ns-multi-write-secret/${MODE}.json
+        ports:
+          - containerPort: 6001
+          - containerPort: 6443
+        resources:
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+          requests:
+            cpu: "500m"
+            memory: "500Mi"
+        volumeMounts:
+        - mountPath: /ns-multi-write-secret
+          name: ns-multi-write-secret
+      volumes:
+      - name: ns-multi-write-secret
+        secret:
+          secretName: ns-multi-write-secret

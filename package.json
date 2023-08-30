@@ -4,7 +4,7 @@
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "description": "",
-  "main": "index.js",
+  "main": "src/core/index.js",
   "bin": "src/core/index.js",
   "config": {
     "covdir": "coverage"

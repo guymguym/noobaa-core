@@ -542,16 +542,6 @@ config.LOG_REPLICATION_ENABLED = true;
 config.AWS_LOG_CANDIDATES_LIMIT = 10;
 config.BUCKET_LOG_REPLICATOR_DELAY = 5 * 60 * 1000;
 
-/////////////////////
-// NAMESPACE_MULTI //
-/////////////////////
-
-/** 
- * not needed atm
- * @see {NamespaceMulti}
- */
-config.NAMESPACE_MULTI_WRITE_HACK = false;
-
 ///////////////////////
 // NAMESPACE CACHING //
 ///////////////////////

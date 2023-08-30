@@ -5,13 +5,12 @@ const _ = require('lodash');
 const stream = require('stream');
 
 const P = require('../util/promise');
-const config = require('../../config');
+// const S3Error = require('../endpoint/s3/s3_errors').S3Error;
 const stream_utils = require('../util/stream_utils');
-const S3Error = require('../endpoint/s3/s3_errors').S3Error;
 
-const EXCEPT_REASONS = [
-    'NO_SUCH_OBJECT'
-];
+// const ACCEPTED_ERRORS_LIST = ['NO_SUCH_BUCKET', 'NoSuchBucket', 'ContainerNotFound'];
+const ACCEPTED_ERRORS_DELETE = ['NO_SUCH_OBJECT', 'NoSuchKey', 'BlobNotFound'];
+const ACCEPTED_ERRORS_ABORT_UPLOAD = ['NO_SUCH_UPLOAD', 'NoSuchUpload'];
 
 /**
  * @implements {nb.Namespace}
@@ -19,19 +18,6 @@ const EXCEPT_REASONS = [
 class NamespaceMulti {
 
     /**
-     * about `config.NAMESPACE_MULTI_WRITE_HACK`:
-     * 
-     * This hack is needed to allow NamespaceMulti to have multiple writers and
-     * single reader - without changing bucket api and schema.
-     * 
-     * It does that by swapping the meaning of `read_resources` (plural) and 
-     * `write_resource` (single) to mean `write_resources` and `read_resource`
-     * respectively.
-     * 
-     * This is needed for a full deployment, but when running just standalone
-     * with src/cmd/nsmulti.js we don't want this because it already added
-     * `write_resources`, so we avoided the confusing meaning swap there.
-     * 
      * @param {{
      *      namespaces: {
      *          read_resources: nb.Namespace[];
@@ -43,15 +29,9 @@ class NamespaceMulti {
      */
     constructor({ namespaces, active_triggers }) {
         this.active_triggers = active_triggers;
-        if (config.NAMESPACE_MULTI_WRITE_HACK) {
-            // swap meaning to allow multi writes while avoiding api changes
-            this._read_resources = [namespaces.write_resource].filter(Boolean);
-            this._write_resources = namespaces.read_resources.filter(Boolean);
-        } else {
-            // keep regular meaning, just add option to send list of write_resources
-            this._read_resources = namespaces.read_resources.filter(Boolean);
-            this._write_resources = namespaces.write_resources?.filter(Boolean) || [namespaces.write_resource].filter(Boolean);
-        }
+        this._read_resources = namespaces.read_resources.filter(Boolean);
+        this._write_resources = namespaces.write_resources?.filter(Boolean) ||
+            [namespaces.write_resource].filter(Boolean);
         this._is_readonly = this._write_resources.every(ns => ns.is_readonly_namespace());
     }
 
@@ -78,27 +58,21 @@ class NamespaceMulti {
     list_objects(params, object_sdk) {
         return this._ns_get({
             mapper: ns => ns.list_objects(params, object_sdk),
-            // reducer: responses => this._reduce_list_responses(responses, params),
-            // except_reasons: ['NoSuchBucket', 'ContainerNotFound'],
-            // cast_error_func: this._cast_err_to_s3err,
+            reducer: responses => this._reduce_list_responses(responses, params),
         });
     }
 
     list_uploads(params, object_sdk) {
         return this._ns_get({
             mapper: ns => ns.list_uploads(params, object_sdk),
-            // reducer: responses => this._reduce_list_responses(responses, params),
-            // except_reasons: ['NoSuchBucket', 'ContainerNotFound'],
-            // cast_error_func: this._cast_err_to_s3err,
+            reducer: responses => this._reduce_list_responses(responses, params),
         });
     }
 
     list_object_versions(params, object_sdk) {
         return this._ns_get({
             mapper: ns => ns.list_object_versions(params, object_sdk),
-            // reducer: responses => this._reduce_list_responses(responses, params),
-            // except_reasons: ['NoSuchBucket', 'ContainerNotFound'],
-            // cast_error_func: this._cast_err_to_s3err,
+            reducer: responses => this._reduce_list_responses(responses, params),
         });
     }
 
@@ -109,13 +83,11 @@ class NamespaceMulti {
     read_object_md(params, object_sdk) {
         return this._ns_get({
             mapper: async ns => {
-                const res = await ns.read_object_md(params, object_sdk);
+                const r = await ns.read_object_md(params, object_sdk);
                 // save the ns in the response for optimizing read_object_stream
-                res.ns ||= ns;
-                return res;
+                r.ns ||= ns;
+                return r;
             },
-            // reducer: responses => _.maxBy(responses, 'create_time'),
-            // except_reasons: EXCEPT_REASONS,
         });
     }
 
@@ -149,9 +121,9 @@ class NamespaceMulti {
             mapper: ns => ns.create_object_upload(params, object_sdk),
             reducer: responses => {
                 let obj_id = '';
-                for (const res of responses) {
-                    if (res.error) throw res.error;
-                    obj_id += '#' + res.response.obj_id;
+                for (const r of responses) {
+                    if (r.error) throw r.error;
+                    obj_id += '#' + r.response.obj_id;
                 }
                 return { obj_id: obj_id.slice(1) };
             }
@@ -167,14 +139,12 @@ class NamespaceMulti {
             },
             reducer: responses => {
                 let etag = '';
-                for (const res of responses) {
-                    if (res.error) throw res.error;
-                    etag += '#' + res.response.etag;
+                for (const r of responses) {
+                    if (r.error) throw r.error;
+                    etag += '#' + r.response.etag;
                 }
-                const res = {
-                    ...responses[0].response,
-                    etag: etag.slice(1),
-                };
+                const res = responses[0].response;
+                res.etag = etag.slice(1);
                 return res;
             },
         });
@@ -200,16 +170,36 @@ class NamespaceMulti {
                 const obj_id = ids.shift();
                 return ns.abort_object_upload({ ...params, obj_id }, object_sdk);
             },
+            accepted_errors: ACCEPTED_ERRORS_ABORT_UPLOAD,
+            // convert no-such-upload to ok response
+            // TODO - we might want to return the error,
+            // but for some reason this keeps retrying even if both uploaded exists
+            accepted_err_handler: err => ({}),
         });
     }
     list_multiparts(params, object_sdk) {
         const ids = params.obj_id.split('#');
-        // todo we need to get the etags of the other namespaces too
+        // todo we need to reduce the etags of the other namespaces too
         return this._ns_put({
             mapper: ns => {
                 const obj_id = ids.shift();
                 return ns.list_multiparts({ ...params, obj_id }, object_sdk);
             },
+            reducer: responses => {
+                for (const r of responses) {
+                    if (r.error) throw r.error;
+                }
+                const res = responses[0].response;
+                for (const p of res.multiparts) {
+                    for (const r of responses.slice(1)) { // skip first
+                        // lookup the same part number in the other responses and append the etags
+                        // TODO - what if not found, or size doesn't match, can we remove just bad parts from response?
+                        const pr = r.response.multiparts.find(it => it.num === p.num);
+                        p.etag += '#' + pr.etag;
+                    }
+                }
+                return res;
+            }
         });
     }
 
@@ -220,12 +210,14 @@ class NamespaceMulti {
     delete_object(params, object_sdk) {
         return this._ns_put({
             mapper: ns => ns.delete_object(params, object_sdk),
-            // except_reasons: EXCEPT_REASONS,
+            accepted_errors: ACCEPTED_ERRORS_DELETE,
         });
     }
     delete_multiple_objects(params, object_sdk) {
         return this._ns_put({
             mapper: ns => ns.delete_multiple_objects(params, object_sdk),
+            accepted_errors: ACCEPTED_ERRORS_DELETE,
+            // TODO -
             // reducer: responses => this._merge_multiple_delete_responses({
             //     // head_res,
             //     responses,
@@ -325,23 +317,36 @@ class NamespaceMulti {
      * @param {{
      *      mapper: (ns:nb.Namespace) => Promise<R>;
      *      reducer?: (responses: {response?:R, error?:Error}[]) => R;
-     *      except_reasons?: string[];
-     *      cast_error_func?: (err: Error) => any;
+     *      accepted_errors?: string[];
+     *      accepted_err_handler?: (err: Error) => R;
      * }} params
      */
-    async _ns_get({ mapper, reducer = null, except_reasons = [], cast_error_func = null }) {
+    async _ns_get({
+        mapper,
+        reducer = undefined,
+        accepted_errors = undefined,
+        accepted_err_handler = undefined,
+    }) {
+
         const responses = await P.map(this._read_resources, async ns => {
             try {
                 const response = await mapper(ns);
                 return { response };
-            } catch (err) {
-                return { error: cast_error_func ? cast_error_func(err) : err };
+            } catch (error) {
+                return { error };
             }
         });
+
+        // call custom reducer if provided
         if (reducer) return reducer(responses);
-        const res = responses[0];
-        if (res.error) throw res.error;
-        return res.response;
+
+        // pick the first good response
+        for (const r of responses) {
+            if (r.response) return r.response;
+        }
+
+        // if all had errors, throw the first error
+        throw responses[0].error;
     }
 
     /**
@@ -349,23 +354,48 @@ class NamespaceMulti {
      * @param {{
      *      mapper: (ns:nb.Namespace) => Promise<R>;
      *      reducer?: (responses: {response?:R, error?:Error}[]) => R;
-     *      except_reasons?: string[];
-     *      cast_error_func?: (err: Error) => any;
+     *      error_mapper?: (err: Error) => Error;
+     *      accepted_errors?: string[];
+     *      accepted_err_handler?: (err: Error) => R;
      * }} params
      */
-    async _ns_put({ mapper, reducer = null, except_reasons, cast_error_func = null }) {
+    async _ns_put({
+        mapper,
+        reducer = undefined,
+        error_mapper = undefined,
+        accepted_errors = undefined,
+        accepted_err_handler = undefined,
+    }) {
+
         const responses = await P.map(this._write_resources, async ns => {
             try {
                 const response = await mapper(ns);
                 return { response };
-            } catch (err) {
-                return { error: cast_error_func ? cast_error_func(err) : err };
+            } catch (error) {
+                return { error };
             }
         });
+
+        // call custom reducer if provided
         if (reducer) return reducer(responses);
-        const res = responses[0];
-        if (res.error) throw res.error;
-        return res.response;
+
+        // if any response failed with a non-acceptable errors, throw that error
+        for (const r of responses) {
+            if (!r.error) continue;
+            if (r.error.rpc_code && accepted_errors?.includes(r.error.rpc_code)) continue;
+            if (r.error.code && accepted_errors?.includes(r.error.code)) continue;
+            throw r.error;
+        }
+
+        // if all succeeded, return the first response
+        for (const r of responses) {
+            if (r.response) return r.response;
+        }
+
+        // last option, throw first accepted error
+        const err = responses[0]?.error || new Error('_ns_put unexpected responses');
+        if (accepted_err_handler) return accepted_err_handler(err);
+        throw err;
     }
 
     /**
@@ -386,88 +416,47 @@ class NamespaceMulti {
         }
     }
 
-    // /**
-    //  * @param {(ns:nb.Namespace) => Promise} func
-    //  */
-    // async _ns_map(func, except_reasons, cast_error_func = null) {
-    //     const replies = await P.map(this._read_resources, async ns => {
-    //         try {
-    //             const res = await func(ns);
-    //             return { reply: res, success: true };
-    //         } catch (err) {
-    //             return {
-    //                 error: cast_error_func ? cast_error_func(err) : err,
-    //                 success: false
-    //             };
-    //         }
-    //     });
-    //     return this._throw_if_any_failed_or_get_succeeded(replies, except_reasons);
-    // }
-
-
-    // _throw_if_any_failed_or_get_succeeded(reply_array, except_reasons) {
-    //     const failed = this._get_failed_responses(reply_array, except_reasons);
-    //     if (!_.isEmpty(failed)) throw _.first(failed);
-    //     const succeeded = this._get_succeeded_responses(reply_array);
-    //     // Since we did not have any success and all of the errors were except_reasons we rely on the first error.
-    //     if (_.isEmpty(succeeded)) throw _.first(reply_array).error;
-    //     return succeeded;
-    // }
-
-    // _throw_if_all_failed_or_get_succeeded(reply_array, except_reasons) {
-    //     const succeeded = this._get_succeeded_responses(reply_array);
-    //     if (!_.isEmpty(succeeded)) return succeeded;
-    //     const failed = this._get_failed_responses(reply_array, except_reasons);
-    //     throw _.first(failed);
-    // }
-
-    // _get_succeeded_responses(reply_array) {
-    //     return reply_array.filter(res => res.success).map(rec => rec.reply);
-    // }
-
-    // _get_failed_responses(reply_array, except_reasons) {
-    //     return reply_array.filter(
-    //         res => !res.success &&
-    //             !_.includes(except_reasons || [], res.error.rpc_code || res.error.code || 'UNKNOWN_ERR')
-    //     )
-    //         .map(rec => rec.error);
-    // }
-
-
     // TODO: Currently it only takes the most recent objects without duplicates
     // This means that in list_object_versions we will only see the is_latest objects
     // Which is not what we wanted since we want to see all of the versions
     /**
-     * @param {nb.NamespaceListResult[]} res 
+     * @param {{ response?: nb.NamespaceListResult, error?: Error}[]} responses 
      * @param {object} params 
      * @returns {nb.NamespaceListResult}
      */
-    _reduce_list_responses(res, params) {
-        if (res.length === 1) return res[0];
-        var i;
-        var j;
+    _reduce_list_responses(responses, params) {
+        if (responses.length === 1) {
+            if (responses[0].error) throw responses[0].error;
+            return responses[0].response;
+        }
+
         const map = {};
-        var is_truncated;
-        for (i = 0; i < res.length; ++i) {
-            for (j = 0; j < res[i].objects.length; ++j) {
-                const obj = res[i].objects[j];
+        let is_truncated = false;
+        for (const r of responses) {
+            if (r.error) {
+                // if (ACCEPTED_ERRORS_LIST.includes(r.error.rpc_code)) continue;
+                // if (ACCEPTED_ERRORS_LIST.includes(r.error.code)) continue;
+                throw r.error;
+            }
+            for (const obj of r.response.objects) {
                 if (!map[obj.key] ||
                     (map[obj.key] && obj.create_time > map[obj.key].create_time)
-                ) map[obj.key] = obj;
+                ) {
+                    map[obj.key] = obj;
+                }
             }
-            for (j = 0; j < res[i].common_prefixes.length; ++j) {
-                const prefix = res[i].common_prefixes[j];
+            for (const prefix of r.response.common_prefixes) {
                 map[prefix] = prefix;
             }
-            if (res[i].is_truncated) is_truncated = true;
+            if (r.response.is_truncated) is_truncated = true;
         }
+
         const all_names = Object.keys(map);
         all_names.sort();
         const names = all_names.slice(0, params.limit || 1000);
         const objects = [];
         const common_prefixes = [];
-        for (i = 0; i < names.length; ++i) {
-            const name = names[i];
+        for (const name of names) {
             const obj_or_prefix = map[name];
             if (typeof obj_or_prefix === 'string') {
                 common_prefixes.push(obj_or_prefix);
@@ -478,6 +467,7 @@ class NamespaceMulti {
         if (names.length < all_names.length) {
             is_truncated = true;
         }
+
         // TODO picking the name as marker is not according to spec of both S3 and Azure
         // because the marker is opaque to the client and therefore it is not safe to assume that using this as next marker
         // will really provide a stable iteration.
@@ -501,81 +491,64 @@ class NamespaceMulti {
         };
     }
 
-    _cast_err_to_s3err(err) {
-        if (!err) return;
-        const err_to_s3err_map = {
-            'NoSuchBucket': S3Error.NoSuchBucket,
-            'ContainerNotFound': S3Error.NoSuchBucket,
-        };
-        let exist = err_to_s3err_map[err.code];
-        if (!exist) return err;
-        let s3error = new S3Error(exist);
-        s3error.message = err.message;
-        return s3error;
-    }
+    // _merge_multiple_delete_responses(params) {
+    //     const { head_res, deleted_res } = params;
+    //     let ns_conslusion;
+    //     if (head_res && (head_res.length !== deleted_res.length)) throw new S3Error(S3Error.InternalError);
+    //     for (let ns = 0; ns < deleted_res.length; ++ns) {
+    //         const deleted_ns = deleted_res[ns];
+    //         const head_ns = head_res && head_res[ns];
+    //         const ns_merged = this._handle_single_namespace_deletes({ deleted_ns, head_ns });
+    //         if (ns_conslusion) {
+    //             for (let obj_index = 0; obj_index < ns_conslusion.length; obj_index++) {
+    //                 ns_conslusion[obj_index] =
+    //                     this._pick_ns_obj_reply({ curr: ns_conslusion[obj_index], cand: ns_merged[obj_index] });
+    //             }
+    //         } else {
+    //             ns_conslusion = ns_merged;
+    //         }
+    //     }
+    //     return ns_conslusion;
+    // }
 
-    _merge_multiple_delete_responses(params) {
-        const { head_res, deleted_res } = params;
-        let ns_conslusion;
-        if (head_res && (head_res.length !== deleted_res.length)) throw new S3Error(S3Error.InternalError);
+    // _handle_single_namespace_deletes(params) {
+    //     let response = [];
+    //     const { deleted_ns, head_ns } = params;
+    //     for (let i = 0; i < deleted_ns.length; ++i) {
+    //         const res = deleted_ns[i];
+    //         const obj = head_ns && head_ns[i];
+    //         if (_.isUndefined(res && res.err_code)) {
+    //             response.push({ success: true, obj, res });
+    //         } else {
+    //             response.push({ success: false, res });
+    //         }
+    //     }
+    //     return response;
+    // }
 
-        for (let ns = 0; ns < deleted_res.length; ++ns) {
-            const deleted_ns = deleted_res[ns];
-            const head_ns = head_res && head_res[ns];
-            const ns_merged = this._handle_single_namespace_deletes({ deleted_ns, head_ns });
-            if (ns_conslusion) {
-                for (let obj_index = 0; obj_index < ns_conslusion.length; obj_index++) {
-                    ns_conslusion[obj_index] =
-                        this._pick_ns_obj_reply({ curr: ns_conslusion[obj_index], cand: ns_merged[obj_index] });
-                }
-            } else {
-                ns_conslusion = ns_merged;
-            }
-        }
+    // _pick_ns_obj_reply(params) {
+    //     const { curr, cand } = params;
+    //     const STATUSES = {
+    //         FAILED_WITH_INFO: 3,
+    //         FAILED_WITHOUT_INFO: 2,
+    //         SUCCEEDED_WITH_INFO: 1,
+    //         SUCCEEDED_WITHOUT_INFO: 0
+    //     };
+    //     const get_object_status = object => {
+    //         if (object.success && object.obj) return STATUSES.SUCCEEDED_WITH_INFO;
+    //         if (object.success) return STATUSES.SUCCEEDED_WITHOUT_INFO;
+    //         if (object.obj) return STATUSES.FAILED_WITH_INFO;
+    //         return STATUSES.FAILED_WITHOUT_INFO;
+    //     };
+    //     const curr_status = get_object_status(curr);
+    //     const cand_status = get_object_status(cand);
 
-        return ns_conslusion;
-    }
-
-
-    _handle_single_namespace_deletes(params) {
-        let response = [];
-        const { deleted_ns, head_ns } = params;
-        for (let i = 0; i < deleted_ns.length; ++i) {
-            const res = deleted_ns[i];
-            const obj = head_ns && head_ns[i];
-            if (_.isUndefined(res && res.err_code)) {
-                response.push({ success: true, obj, res });
-            } else {
-                response.push({ success: false, res });
-            }
-        }
-        return response;
-    }
-
-
-    _pick_ns_obj_reply(params) {
-        const { curr, cand } = params;
-        const STATUSES = {
-            FAILED_WITH_INFO: 3,
-            FAILED_WITHOUT_INFO: 2,
-            SUCCEEDED_WITH_INFO: 1,
-            SUCCEEDED_WITHOUT_INFO: 0
-        };
-        const get_object_status = object => {
-            if (object.success && object.obj) return STATUSES.SUCCEEDED_WITH_INFO;
-            if (object.success) return STATUSES.SUCCEEDED_WITHOUT_INFO;
-            if (object.obj) return STATUSES.FAILED_WITH_INFO;
-            return STATUSES.FAILED_WITHOUT_INFO;
-        };
-        const curr_status = get_object_status(curr);
-        const cand_status = get_object_status(cand);
-
-        if (curr_status > cand_status) return curr;
-        if (cand_status > curr_status) return cand;
-        if ((cand_status === STATUSES.FAILED_WITH_INFO || cand_status === STATUSES.SUCCEEDED_WITH_INFO) &&
-            (cand.obj.create_time > curr.obj.create_time)) return cand;
-        return curr;
-    }
+    //     if (curr_status > cand_status) return curr;
+    //     if (cand_status > curr_status) return cand;
+    //     if ((cand_status === STATUSES.FAILED_WITH_INFO || cand_status === STATUSES.SUCCEEDED_WITH_INFO) &&
+    //         (cand.obj.create_time > curr.obj.create_time)) return cand;
+    //     return curr;
+    // }
 
 }
 

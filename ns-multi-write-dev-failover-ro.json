@@ -1,0 +1,16 @@
+{
+    "write_resources": [],
+    "read_resources": [
+        {
+            "resource": {
+                "name": "secondary",
+                "endpoint": "https://localhost:4003",
+                "endpoint_type": "S3_COMPATIBLE",
+                "auth_method": "AWS_V4",
+                "access_key": "ACCESSKEY",
+                "secret_key": "SECRETKEY",
+                "access_mode": "READ_WRITE"
+            }
+        }
+    ]
+}

@@ -10,6 +10,7 @@ dbg.original_console();
 
 const config = require('../../config');
 
+const fs = require('fs');
 const util = require('util');
 const minimist = require('minimist');
 
@@ -20,10 +21,9 @@ const RpcError = require('../rpc/rpc_error');
 const ObjectSDK = require('../sdk/object_sdk');
 const http_utils = require('../util/http_utils');
 const cloud_utils = require('../util/cloud_utils');
-const SensitiveString = require('../util/sensitive_string');
 const BucketSpaceS3 = require('../sdk/bucketspace_s3');
-// const BucketSpaceFS = require('../sdk/bucketspace_fs');
-// const endpoint_stats_collector = require('../sdk/endpoint_stats_collector');
+const NamespaceMulti = require('../sdk/namespace_multi');
+const SensitiveString = require('../util/sensitive_string');
 
 const HELP = `
 Help:
@@ -35,13 +35,13 @@ Help:
 const USAGE = `
 Usage:
 
-    node src/cmd/nsmulti <nsmulti-config-json> [options...]
+    node src/cmd/nsmulti <config-path> [options...]
 `;
 
 const ARGUMENTS = `
 Arguments:
 
-    <nsmulti-config-json>      A json describing the configuration for nsmulti (TBD).
+    <config-path>      A path to json file describing the configuration for nsmulti (TBD).
 `;
 
 const OPTIONS = `
@@ -49,13 +49,14 @@ Options:
 
     --http_port <port>                      (default 6001)           Set the S3 endpoint listening HTTP port to serve.
     --https_port <port>                     (default 6443)           Set the S3 endpoint listening HTTPS port to serve.
-    --https_port_sts <port>                 (default -1)             Set the S3 endpoint listening HTTPS port for STS.
-    --metrics_port <port>                   (default -1)             Set the metrics listening port for prometheus.
     --access_key <key>                      (default none)           Authenticate incoming requests from this access key only (default is no auth).
     --secret_key <key>                      (default none)           Authenticate incoming requests with this secret key only (default is no auth).
     --debug <level>                         (default 0)              Increase debug level
-    --forks <n>                             (default none)           Forks spread incoming requests (config.ENDPOINT_FORKS used if flag is not provided)
 `;
+
+// --https_port_sts <port>                 (default -1)             Set the S3 endpoint listening HTTPS port for STS.
+// --metrics_port <port>                   (default -1)             Set the metrics listening port for prometheus.
+// --forks <n>                             (default none)           Forks spread incoming requests (config.ENDPOINT_FORKS used if flag is not provided)
 
 const ANONYMOUS_AUTH_WARNING = `
 
@@ -77,90 +78,64 @@ function print_usage() {
 
 class NSMultiObjectSDK extends ObjectSDK {
 
-    constructor(nsmulti_config, account) {
+    constructor(account, bucketspace, ns_config) {
+        // hook up the rpc calls
         const rpc_client = {
-            pool: {
-                update_issues_report(params) {
-                    console.warn('update_issues_report', params);
-                },
+            options: {},
+            bucket: {
+                // read_bucket_sdk_info: params => this.read_bucket_sdk_info(params),
+            },
+            account: {
+                // read_account_by_access_key: params => this.read_account_by_access_key(params),
             },
             object: {
-                update_endpoint_stats(params) {
-                    console.log('update_endpoint_stats', params);
-                },
+                update_endpoint_stats: params => console.log('update_endpoint_stats', params),
+                dispatch_triggers: params => console.log('dispatch_triggers', params),
+            },
+            pool: {
+                update_issues_report: params => console.warn('update_issues_report', params),
             },
             stats: {
-                update_nsfs_stats(params) {
-                    console.log('update_nsfs_stats', params);
-                },
+                update_nsfs_stats: params => console.log('update_nsfs_stats', params),
             },
         };
         super(rpc_client, rpc_client, null);
-        this.nsmulti_config = nsmulti_config;
-        this.nsmulti_account = account;
-        this.nsmulti_namespaces = {};
-
-        const ns_info = this.nsmulti_config.read_resources[0].resource;
-        const agent = ns_info.endpoint_type === 'AWS' ?
-            http_utils.get_default_agent(ns_info.endpoint) :
-            http_utils.get_unsecured_agent(ns_info.endpoint);
-        const s3_params = {
-            params: { Bucket: ns_info.target_bucket },
-            endpoint: ns_info.endpoint,
-            aws_sts_arn: ns_info.aws_sts_arn,
-            accessKeyId: ns_info.access_key.unwrap(),
-            secretAccessKey: ns_info.secret_key.unwrap(),
-            signatureVersion: cloud_utils.get_s3_endpoint_signature_ver(ns_info.endpoint, ns_info.auth_method),
-            s3ForcePathStyle: true,
-            httpOptions: { agent },
-            access_mode: ns_info.access_mode,
-            // region: 'us-east-1', // TODO needed?
-            // computeChecksums: false, // disabled by default for performance
-        };
-        this.bucketspace_s3 = new BucketSpaceS3({ s3_params });
+        this.account = account;
+        this.bucketspace = bucketspace;
+        this.ns_config = ns_config;
+        this.namespaces = {};
     }
 
     _get_bucketspace() {
-        return this.bucketspace_s3;
+        return this.bucketspace;
+    }
+
+    async _get_bucket_namespace(bucket_name) {
+        const existing_ns = this.namespaces[bucket_name];
+        if (existing_ns) return existing_ns;
+
+        const to_single_ns = r => this._setup_single_namespace({
+            ...r,
+            resource: {
+                ...r.resource,
+                target_bucket: bucket_name,
+            },
+        });
+        const ns = new NamespaceMulti({
+            namespaces: {
+                read_resources: this.ns_config.read_resources?.map(to_single_ns),
+                write_resources: this.ns_config.write_resources?.map(to_single_ns),
+            },
+            active_triggers: null,
+        });
+        this.namespaces[bucket_name] = ns;
+        return ns;
     }
 
     async read_bucket_usage_info() { return undefined; }
     async read_bucket_sdk_website_info() { return undefined; }
     async read_bucket_sdk_namespace_info() { return undefined; }
     async read_bucket_sdk_caching_info() { return undefined; }
-    get_auth_token() { return undefined; }
-    set_auth_token() { return undefined; }
-
-    async load_requesting_account(auth_req) {
-        const access_key = this.nsmulti_account.access_keys?.[0]?.access_key;
-        if (access_key) {
-            const token = this.get_auth_token();
-            if (!token) {
-                throw new RpcError('UNAUTHORIZED', `Anonymous access to bucket no allowed`);
-            }
-            if (token.access_key !== access_key.unwrap()) {
-                throw new RpcError('INVALID_ACCESS_KEY_ID', `Account with access_key not allowed`);
-            }
-        }
-        this.requesting_account = this.nsmulti_account;
-    }
-
-    async _get_bucket_namespace(bucket_name) {
-        const existing_ns = this.nsmulti_namespaces[bucket_name];
-        if (existing_ns) return existing_ns;
-        const with_target_bucket = nsr => (nsr && { resource: { ...nsr.resource, target_bucket: bucket_name } });
-        const ns = this._setup_multi_namespace({
-            name: bucket_name,
-            namespace: {
-                read_resources: this.nsmulti_config.read_resources?.map(with_target_bucket),
-                write_resources: this.nsmulti_config.write_resources?.map(with_target_bucket),
-                write_resource: with_target_bucket(this.nsmulti_config.write_resource),
-            },
-        });
-        this.nsmulti_namespaces[bucket_name] = ns;
-        return ns;
-    }
-
     async read_bucket_sdk_policy_info(bucket_name) {
         return {
             s3_policy: {
@@ -172,16 +147,81 @@ class NSMultiObjectSDK extends ObjectSDK {
                     principal: [new SensitiveString('*')],
                 }]
             },
-            system_owner: new SensitiveString('nsfs'),
-            bucket_owner: new SensitiveString('nsfs'),
+            system_owner: this.account.email,
+            bucket_owner: this.account.email,
         };
+    }
+
+    // get_auth_token() { return undefined; }
+    // set_auth_token() { return undefined; }
+
+    // currently unused because we override _get_bucket_namespace()
+    // read_bucket_sdk_info({ name }) {}
+
+    // currently unused because we override load_requesting_account()
+    // read_account_by_access_key({ access_key }) {}
+
+    async load_requesting_account(auth_req) {
+        const access_key = this.account.access_keys?.[0]?.access_key;
+        if (access_key) {
+            const token = this.get_auth_token();
+            if (!token) {
+                throw new RpcError('UNAUTHORIZED', `Anonymous access to bucket no allowed`);
+            }
+            if (token.access_key !== access_key.unwrap()) {
+                throw new RpcError('INVALID_ACCESS_KEY_ID', `Access_key not allowed`);
+            }
+        }
+        this.requesting_account = this.account;
+    }
+}
+
+function load_config(config_path) {
+    try {
+        const json = fs.readFileSync(config_path, 'utf8');
+        const ns_config = JSON.parse(json);
+
+        for (const r of [
+            ...ns_config.read_resources,
+            ...ns_config.write_resources,
+        ]) {
+            if (!r) continue;
+            r.resource.access_key = new SensitiveString(r.resource.access_key);
+            r.resource.secret_key = new SensitiveString(r.resource.secret_key);
+        }
+
+        // use the first read resource as the bucketspace resource
+        const bsr = ns_config.read_resources[0].resource;
+        const agent = bsr.endpoint_type === 'AWS' ?
+            http_utils.get_default_agent(bsr.endpoint) :
+            http_utils.get_unsecured_agent(bsr.endpoint);
+        const s3_params = {
+            endpoint: bsr.endpoint,
+            aws_sts_arn: bsr.aws_sts_arn,
+            accessKeyId: bsr.access_key.unwrap(),
+            secretAccessKey: bsr.secret_key.unwrap(),
+            signatureVersion: cloud_utils.get_s3_endpoint_signature_ver(bsr.endpoint, bsr.auth_method),
+            s3ForcePathStyle: true,
+            httpOptions: { agent },
+            // params: { Bucket: bsr.target_bucket },
+            // access_mode: bsr.access_mode,
+            // region: 'us-east-1', // TODO needed?
+            // computeChecksums: false, // disabled by default for performance
+        };
+        const bucketspace = new BucketSpaceS3({ s3_params });
+
+        return {
+            bucketspace,
+            ns_config,
+        };
+    } catch (err) {
+        console.warn('load_nsmulti_config: FAILED', err);
     }
 }
 
 async function main(argv = minimist(process.argv.slice(2))) {
     try {
         config.DB_TYPE = 'none';
-        config.NSFS_VERSIONING_ENABLED = true;
 
         if (argv.help || argv.h) return print_usage();
         if (argv.debug) {
@@ -189,32 +229,23 @@ async function main(argv = minimist(process.argv.slice(2))) {
             dbg.set_module_level(debug_level, 'core');
             nb_native().fs.set_debug_level(debug_level);
         }
+
         const http_port = Number(argv.http_port) || 6001;
         const https_port = Number(argv.https_port) || 6443;
-        const https_port_sts = Number(argv.https_port_sts) || -1;
-        const metrics_port = Number(argv.metrics_port) || -1;
+        // const https_port_sts = Number(argv.https_port_sts) || -1;
+        // const metrics_port = Number(argv.metrics_port) || -1;
         const access_key = argv.access_key && new SensitiveString(String(argv.access_key));
         const secret_key = argv.secret_key && new SensitiveString(String(argv.secret_key));
-        const forks = Number(argv.forks) || 0;
+        const config_path = argv._[0];
 
-        const nsmulti_config_json = argv._[0];
-        if (!nsmulti_config_json) return print_usage();
-        const nsmulti_config = JSON.parse(nsmulti_config_json);
+        if (!config_path) return print_usage();
 
-        for (const r of [
-            ...nsmulti_config.read_resources,
-            ...nsmulti_config.write_resources,
-            nsmulti_config.write_resource,
-        ]) {
-            if (!r) continue;
-            r.resource.access_key = new SensitiveString(r.resource.access_key);
-            r.resource.secret_key = new SensitiveString(r.resource.secret_key);
-        }
+        const { bucketspace, ns_config } = load_config(config_path);
 
         const account = {
-            email: new SensitiveString('nsfs@noobaa.io'),
+            name: new SensitiveString('nsmulti'),
+            email: new SensitiveString('nsmulti'),
             access_keys: access_key && [{ access_key, secret_key }],
-            // nsfs_account_config: fs_config,
         };
 
         if (Boolean(access_key) !== Boolean(secret_key)) {
@@ -224,34 +255,34 @@ async function main(argv = minimist(process.argv.slice(2))) {
 
         if (!access_key) console.log(ANONYMOUS_AUTH_WARNING);
 
-        console.log('nsfs: setting up ...', {
-            nsmulti_config,
+        console.log('nsmulti: setting up ...', {
+            config_path,
             http_port,
             https_port,
-            https_port_sts,
-            metrics_port,
+            // https_port_sts,
+            // metrics_port,
             access_key,
             secret_key,
-            forks,
+            // forks,
         });
 
         const endpoint = require('../endpoint/endpoint');
         await endpoint.start_endpoint({
             http_port,
             https_port,
-            https_port_sts,
+            // https_port_sts,
             // metrics_port,
             // forks,
             init_request_sdk: (req, res) => {
-                req.object_sdk = new NSMultiObjectSDK(nsmulti_config, account);
+                req.object_sdk = new NSMultiObjectSDK(account, bucketspace, ns_config);
             }
         });
 
-        console.log('nsfs: listening on', util.inspect(`http://localhost:${http_port}`));
-        console.log('nsfs: listening on', util.inspect(`https://localhost:${https_port}`));
+        console.log('nsmulti: listening on', util.inspect(`http://localhost:${http_port}`));
+        console.log('nsmulti: listening on', util.inspect(`https://localhost:${https_port}`));
 
     } catch (err) {
-        console.error('nsfs: exit on error', err.stack || err);
+        console.error('nsmulti: exit on error', err.stack || err);
         process.exit(2);
     }
 }

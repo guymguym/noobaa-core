@@ -210,7 +210,7 @@ class NamespaceFS {
      * }} params
      */
     constructor({ bucket_path, fs_backend, bucket_id, namespace_resource_id, access_mode, versioning }) {
-        dbg.log0('NamespaceFS: buffers_pool', buffers_pool);
+        dbg.log0('NamespaceFS: buffers_pool', { ...buffers_pool, buffers: buffers_pool.buffers.length });
         this.bucket_path = path.resolve(bucket_path);
         this.fs_backend = fs_backend;
         this.bucket_id = bucket_id;

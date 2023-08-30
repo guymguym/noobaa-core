@@ -2,23 +2,41 @@
 
 The use case is of writing to primary and secondary, reading from primary only, and do manual failover to secondary as read-only, or read-write (and sync data back befor failback).
 
+In the regular situation we would like to write to two targets, but reading only from primary:
 ```
-                        /---> S3 Primary (read-write)
 S3 Client ---> NS-MULTI
-                        \---> S3 Secondary (write-only)
+                       \---> S3 Primary (read-write)
+                       \---> S3 Secondary (write-only)
 ```
 
-Thoughts:
-1. To avoid many API changes for the POC we use read_resources (which is an array) used as the list of resources to WRITE (!) to, and then write_resource actually used as the only one to READ from. After POC we will just add a new list for write_resources to the API (keep backward compatible working as long as it makes sense). 
-2. Error handling strategy - Should we error to the client only if primary fails?
-4. How do we resync secondary after outage or other errors? 
-5. How do we resync primary after failover with writes enabled on secondary?
-6. Do we need buffering for the secondary writes? or does it has its own?
-7. Should we be transparent to Accounts and Buckets?
-
-### Build on Mac/Linux
-
+On primary failure, the configuration can be changed to read only from secondary:
 ```
+S3 Client ---> NS-MULTI
+                       \---> S3 Secondary (read-only)
+```
+
+Or if preferred, we can configure to read-write to secondary,
+which means we will have to sync back changes the primary before failback:
+```
+S3 Client ---> NS-MULTI
+                       \---> S3 Secondary (read-write)
+```
+
+In this POC we will provide manual switchig between modes, and will not handle the syncing of data written during failover.
+
+Open questions:
+1. Error handling strategy - Should we error to the client only if primary fails?
+1. How do we resync secondary after outage or other errors? 
+1. How do we resync primary after failover with writes enabled on secondary?
+1. Do we need buffering for the secondary writes? or does it has its own?
+1. Should we be transparent to Accounts and Buckets?
+
+## Developer mode
+
+Build:
+```sh
+git clone https://github.com/guymguym/noobaa-core.git
+cd noobaa-core
 git switch guy-5.13-ns-multi-write
 npm install
 npm run build
@@ -26,69 +44,123 @@ make noobaa NOOBAA_TAG=guymguym/noobaa-core:5.13-ns-multi-write
 docker push guymguym/noobaa-core:5.13-ns-multi-write
 ```
 
-### Test locally
-
-Prepare the primary and secondary resource configurations -
+Set shell variables:
 ```sh
-PRIMARY_RESOURCE='{
-	"resource": {
-		"name": "primary",
-		"endpoint": "https://localhost:4002",
-		"endpoint_type": "S3_COMPATIBLE",
-		"auth_method": "AWS_V4",
-		"access_key": "ACCESSKEY",
-		"secret_key": "SECRETKEY",
-		"access_mode": "READ_WRITE"
-	}
-}'
-SECONDARY_RESOURCE='{
-	"resource": {
-		"name": "secondary",
-		"endpoint": "https://localhost:4003",
-		"endpoint_type": "S3_COMPATIBLE",
-		"auth_method": "AWS_V4",
-		"access_key": "ACCESSKEY",
-		"secret_key": "SECRETKEY",
-		"access_mode": "READ_WRITE"
-	}
-}'
-```
-
-Start two local nsfs endpoint for testing to serve primary and secondary -
-```sh
+export AWS_ACCESS_KEY_ID=ACCESSKEY
+export AWS_SECRET_ACCESS_KEY=SECRETKEY
 export CONFIG_JS_PROMETHEUS_ENABLED=false
-mkdir -p primary/bucket1
-mkdir -p secondary/bucket1
-node --unhandled-rejections=warn src/core/nsfs --http_port 6002 --https_port 4002 primary
-node --unhandled-rejections=warn src/core/nsfs --http_port 6003 --https_port 4003 secondary
+S3_CREDS=(--access_key $AWS_ACCESS_KEY_ID --secret_key $AWS_SECRET_ACCESS_KEY)
+S3_HOST=localhost:6001
+BKT="test-bucket"
+S3BKT="s3://$BKT"
+alias x3='aws --endpoint http://$S3_HOST s3'
+alias x3api='aws --endpoint http://$S3_HOST s3api'
 ```
 
-Start the nsmulti command with variables -
+Start two local nsfs endpoint for testing to serve primary and secondary:
 ```sh
-node --unhandled-rejections=warn src/core/nsmulti '{
-	"read_resources":  [ '${PRIMARY_RESOURCE}' ],
-	"write_resources": [ '${PRIMARY_RESOURCE}', '${SECONDARY_RESOURCE}' ]
+rm -rf primary && mkdir -p primary/$BKT
+rm -rf secondary && mkdir -p secondary/$BKT
+node --unhandled-rejections=warn src/core/nsfs $S3_CREDS --http_port 6002 --https_port 4002 primary
+node --unhandled-rejections=warn src/core/nsfs $S3_CREDS --http_port 6003 --https_port 4003 secondary
+```
+
+Start s3 server with ns-multi config over default port 6001 (see --help):
+```sh
+node --unhandled-rejections=warn src/core/nsmulti $S3_CREDS ns-multi-write-config.json
+```
+
+Failover to secondary in read-only mode:
+```sh
+node --unhandled-rejections=warn src/core/nsmulti $S3_CREDS ns-multi-failover-ro-config.json
+```
+
+Failover to secondary in read-write mode:
+```sh
+node --unhandled-rejections=warn src/core/nsmulti $S3_CREDS ns-multi-failover-rw-config.json
+```
+
+Tests:
+```sh
+x3 cp --recursive src $S3BKT
+x3 ls $S3BKT
+find primary -type f | head -n 10
+find secondary -type f | head -n 10
+du -sh primary/*
+du -sh secondary/*
+diff -r primary secondary
+```
+
+Benchmarks:
+```sh
+WARP_OPTS=(--host $S3_HOST --bucket $BKT --duration 10s --objects 1000 --obj.size 1MiB)
+warp mixed 	$WARP_OPTS
+warp put 	$WARP_OPTS
+warp get 	$WARP_OPTS --noclear
+warp get 	$WARP_OPTS --noclear --list-existing
+```
+
+## Kubernetes/Openshift mode
+
+Create a namespace and set it as current
+```sh
+kubectl create ns noobaa-ns-multi-write-poc
+kubectl config set-context --current --namespace noobaa-ns-multi-write-poc
+```
+
+Prepare configs -
+```sh
+PRIMARY='{
+	"name": "primary",
+	"endpoint": "https://192.168.0.95:4002",
+	"endpoint_type": "S3_COMPATIBLE",
+	"auth_method": "AWS_V4",
+	"access_key": "ACCESSKEY",
+	"secret_key": "SECRETKEY",
+	"access_mode": "READ_WRITE"
 }'
-```
-
-Change to use secondary in read-only mode -
-```sh
-node --unhandled-rejections=warn src/core/nsmulti '{
-	"read_resources":  [ '${SECONDARY_RESOURCE}' ],
-	"write_resources": [ ]
+SECONDARY='{
+	"name": "secondary",
+	"endpoint": "https://192.168.0.95:4003",
+	"endpoint_type": "S3_COMPATIBLE",
+	"auth_method": "AWS_V4",
+	"access_key": "ACCESSKEY",
+	"secret_key": "SECRETKEY",
+	"access_mode": "READ_WRITE"
 }'
+echo '{
+	"write_resources": [ { "resource": '$PRIMARY' }, { "resource": '$SECONDARY' } ],
+	"read_resources":  [ { "resource": '$PRIMARY' } ]
+}' | jq > ns-multi-write-normal.json
+echo '{
+	"write_resources": [ ],
+	"read_resources":  [ { "resource": '$SECONDARY' } ]
+}' | jq > ns-multi-write-failover.json
 ```
 
-
-### Running as container
-
-Build noobaa-core poc image:
-
+Create a secret to keep the configuration json -
 ```sh
-git switch guy-5.13-ns-multi-write
-make noobaa NOOBAA_TAG=guymguym/noobaa-core:5.13-ns-multi-write
-docker push guymguym/noobaa-core:5.13-ns-multi-write
+kubectl create secret generic ns-multi-write-secret \
+	--from-file=normal.json=ns-multi-write-normal.json \
+	--from-file=failover.json=ns-multi-write-failover.json
 ```
+
+Create deployment -
+```sh
+kubectl apply -f ns-multi-write-deploy.yaml
+```
+
+Change to failover mode -
+```sh
+kubectl set env deploy/ns-multi-write MODE=failover
+```
+
+Change back to normal mode -
+```sh
+kubectl set env deploy/ns-multi-write MODE=normal
+```
+
+## Operator mode - NOT YET IMPLEMENTED
 
 Get operator released version:
 
@@ -100,75 +172,50 @@ alias nb="$PWD/noobaa-operator"
 Install the operator and start the system:
 
 ```sh
-kubectl config set-context --current --namespace noobaa
+POD_RESOURCES='{
+	"requests": { "cpu":"500m", "memory":"500Mi" },
+	"limits":   { "cpu":"2",    "memory":"2Gi"   }
+}'
 
+kubectl config set-context --current --namespace noobaa
 nb crd create
 nb operator install
-
-POD_RESOURCES='{ "requests": {"cpu":"500m","memory":"500Mi"}, "limits": {"cpu":"2","memory":"2Gi"} }'
 nb system create \
     "--noobaa-image=guymguym/noobaa-core:5.13-ns-multi-write" \
     "--core-resources=$POD_RESOURCES" \
     "--db-resources=$POD_RESOURCES" \
     "--endpoint-resources=$POD_RESOURCES"
-
 nb status
 nb bucket delete first.bucket
 
-# mini doesn't work well
+# NOTICE that --mini doesn't work well
 # nb install -n noobaa --mini --noobaa-image=guymguym/noobaa-core:5.13-ns-multi-write
 ```
 
-### Setup standalone S3 endpoint (nsfs) for primary and secondary
-
+Configure and create a bucket with OBC -
 ```sh
-kubectl apply -f simple-nsfs-pod.yaml
-```
-
-
-### Setup port-forwarding to connect from local host
-
-```sh
-kubectl port-forward service/s3 6001:s3
-kubectl port-forward service/nsfs 6002:http
-alias s3='aws --endpoint http://localhost:6001 s3'
-alias s3nsfs='aws --endpoint http://localhost:6002 s3'
-```
-
-### Create primary and secondary buckets
-
-```sh
-aws --endpoint http://localhost:6002 s3 mb s3://primary-bucket
-aws --endpoint http://localhost:6002 s3 mb s3://secondary-bucket
-aws --endpoint http://localhost:6002 s3 ls
-```
-
-### Setup Bucket
-
-```sh
+## TODO - this will require allowing a namespacestore without a target bucket ...
 nb namespacestore create s3-compatible primary \
-	--endpoint https://nsfs:6443 \
-	--target-bucket primary-bucket \
-	--access-key PRIMARYACCESSKEY \
-	--secret-key 123456
+	--endpoint https://primary-endpoint \
+	--access-key ACCESSKEY \
+	--secret-key SECRETKEY
 
+## TODO - this will require allowing a namespacestore without a target bucket ...
 nb namespacestore create s3-compatible secondary \
-	--endpoint https://nsfs:6443 \
-	--target-bucket secondary-bucket \
-	--access-key SECONDARYACCESSKEY \
-	--secret-key 123456 \
-    --access-mode read-only
+	--endpoint https://secondary-endpoint \
+	--access-key ACCESSKEY \
+	--secret-key SECRETKEY
 
+## TODO - this will require new field write-resource**s** for multiple write targets
 nb bucketclass create namespace-bucketclass multi multi-class \
-	--write-resource primary \
-	--read-resources primary,secondary
+	--write-resources primary,secondary \
+	--read-resources primary
 
+## TODO - this will need to create the bucket on all write targets
 nb obc create multi-bucket \
 	--bucketclass multi-class \
 	--exact
 ```
-
-### Use Bucket
 
 Get OBC credentials:
 
@@ -179,18 +226,19 @@ nb obc status multi-bucket --show-secrets
 Use aws cli:
 
 ```sh
+S3_HOST='...get from service...'
 export AWS_ACCESS_KEY_ID=$(kubectl get secret multi-bucket -n noobaa -o json | jq -r '.data.AWS_ACCESS_KEY_ID|@base64d')
 export AWS_SECRET_ACCESS_KEY=$(kubectl get secret multi-bucket -n noobaa -o json | jq -r '.data.AWS_SECRET_ACCESS_KEY|@base64d')
-s3 ls
+x3 ls
 ```
 
-### Check bucket config
+Get the bucket namespace policy:
 
 ```sh
 nb api bucket read_bucket '{ "name": "multi-bucket" }'
 ```
 
-### Failover READ-ONLY
+Failover READ-ONLY:
 
 We assume the failover trigger is going to be decided later, for now it's a manual api call.
 
@@ -199,41 +247,28 @@ To invoke failover and remove the primary from the namespace we would update the
 CONFUSED ??? - this is because we swapped the meaning of write_resource and read_resources to avoid API changes for the POC - see comment at the top.
 
 ```sh
-nb api bucket update_bucket '{
-	"name": "multi-bucket",
-	"namespace": {
-		"write_resource": { "resource": "secondary" },
-		"read_resources": []
-	}
-}'
+nb api bucket update_bucket '{ "name": "multi-bucket", "namespace": {
+	"write_resources": [],
+	"read_resources":  [{ "resource": "secondary" }]
+}}'
 ```
 
-### Failover READ-WRITE
+Failover READ-WRITE:
 
 NOTE - this will requires sync back to primary before failback...
 
 ```sh
-nb api bucket update_bucket '{
-	"name": "multi-bucket",
-	"namespace": {
-		"write_resource": { "resource": "secondary" },
-		"read_resources": [{ "resource": "secondary" }]
-	}
-}'
+nb api bucket update_bucket '{ "name": "multi-bucket", "namespace": {
+	"write_resources": [{ "resource": "secondary" }],
+	"read_resources":  [{ "resource": "secondary" }]
+}}'
 ```
 
-### Failback
+Failback:
 
 ```sh
-nb api bucket update_bucket '{
-	"name": "multi-bucket",
-	"namespace": {
-		"write_resource": 
-			{ "resource": "primary" },
-		"read_resources": [
-			{ "resource": "primary" },
-			{ "resource": "secondary" }
-		]
-	}
-}'
+nb api bucket update_bucket '{ "name": "multi-bucket", "namespace": {
+	"write_resources": [{ "resource": "primary" },
+	"read_resources":  [{ "resource": "primary" }, { "resource": "secondary" }]
+}}'
 ```
