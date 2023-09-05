@@ -10,7 +10,6 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
-const dbg = require('./src/util/debug_module')(__filename);
 
 /////////////////////////
 // CONTAINER RESOURCES //
@@ -125,7 +124,7 @@ config.S3_MD_SIZE_LIMIT = 2 * 1024;
 config.SEMAPHORE_MONITOR_DELAY = 10 * 1000;
 // Semaphore metrics average calculation intervals in minutes, values need to be in ascending order
 config.SEMAPHORE_METRICS_AVERAGE_INTERVALS = Object.freeze(['1', '5', '10']);
-config.ENABLE_SEMAPHORE_MONITOR = true
+config.ENABLE_SEMAPHORE_MONITOR = true;
 
 config.ENDPOINT_HTTP_SERVER_REQUEST_TIMEOUT = 300 * 1000;
 config.ENDPOINT_HTTP_SERVER_KEEPALIVE_TIMEOUT = 5 * 1000;
@@ -166,9 +165,9 @@ config.STS_CORS_EXPOSE_HEADERS = 'ETag';
 // SECRETS CONFIG  //
 /////////////////////
 
-config.JWT_SECRET = process.env.JWT_SECRET || _get_data_from_file(`/etc/noobaa-server/jwt`);
-config.SERVER_SECRET = process.env.SERVER_SECRET || _get_data_from_file(`/etc/noobaa-server/server_secret`);
-config.NOOBAA_AUTH_TOKEN = process.env.NOOBAA_AUTH_TOKEN || _get_data_from_file(`/etc/noobaa-auth-token/auth_token`);
+config.JWT_SECRET = process.env.JWT_SECRET || _read_config_from_file(`/etc/noobaa-server/jwt`);
+config.SERVER_SECRET = process.env.SERVER_SECRET || _read_config_from_file(`/etc/noobaa-server/server_secret`);
+config.NOOBAA_AUTH_TOKEN = process.env.NOOBAA_AUTH_TOKEN || _read_config_from_file(`/etc/noobaa-auth-token/auth_token`);
 
 config.ROOT_KEY_MOUNT = '/etc/noobaa-server/root_keys';
 
@@ -733,16 +732,18 @@ config.DEFAULT_REGION = 'us-east-1';
 //                 //
 /////////////////////
 
+// looking up config-local module relative to cwd to allow pkg to find it
+// outside the binary package - see https://github.com/vercel/pkg#snapshot-filesystem
+const CONFIG_LOCAL_JS = path.resolve(
+    process.env.CONFIG_LOCAL_JS || 'config-local.js'
+);
+
 // load a local config file that overwrites some of the config
 function load_config_local() {
     try {
-        // looking up config-local module using process.cwd() to allow pkg to find it
-        // outside the binary package - see https://github.com/vercel/pkg#snapshot-filesystem
-        // @ts-ignore
-        // eslint-disable-next-line global-require
-        const local_config = require(path.join(process.cwd(), 'config-local'));
+        const local_config = require(CONFIG_LOCAL_JS);
+        console.log('load_config_local: LOADED', CONFIG_LOCAL_JS);
         if (!local_config) return;
-        console.warn('load_config_local: LOADED', local_config);
         if (typeof local_config === 'function') {
             const local_config_func = /** @type {function} */ (local_config);
             local_config_func(config);
@@ -753,7 +754,30 @@ function load_config_local() {
             throw new Error(`Expected object or function to be exported from config-local - ${typeof local_config}`);
         }
     } catch (err) {
-        if (err.code !== 'MODULE_NOT_FOUND') throw err;
+        if (err.code !== 'MODULE_NOT_FOUND' && err.code !== 'ENOENT') throw err;
+        console.log('load_config_local: NO LOCAL CONFIG');
+    }
+}
+
+// live reloading the config local file
+// using require and deleting from require.cache to reload a module from file.
+// the loaded module can simply require any module and make changes to config,
+// or it could return a function or object to apply to config, see load_config_local().
+function reload_config_local() {
+    try {
+        // use `watchFile()` and not `watch()` because we want stat polling
+        // to allow the file to be missing and then added on runtime.
+        fs.watchFile(CONFIG_LOCAL_JS, { interval: 10007 }, () => {
+            console.log('reload_config_local: RELOAD', CONFIG_LOCAL_JS);
+            delete require.cache[CONFIG_LOCAL_JS];
+            try {
+                load_config_local();
+            } catch (err) {
+                // we cannot rethrow, next watch event will try to load again
+            }
+        }).unref();
+    } catch (err) {
+        console.log('reload_config_local: FAILED TO WATCH FILE', CONFIG_LOCAL_JS, err);
     }
 }
 
@@ -802,16 +826,21 @@ function load_config_env_overrides() {
     }
 }
 
-function _get_data_from_file(file_name) {
-    let data;
+/**
+ * @param {string} file_name
+ * @returns {string|undefined}
+ */
+function _read_config_from_file(file_name) {
     try {
-        data = fs.readFileSync(file_name).toString();
-    } catch (e) {
-        dbg.log1(`Error accrued while getting the data from ${file_name}: ${e}`);
-        return;
+        return fs.readFileSync(file_name, 'utf8');
+    } catch (err) {
+        if (err.code !== 'ENOENT') {
+            console.warn(`read_config_from_file: failed to read ${file_name}`, err);
+        }
+        return undefined;
     }
-    return data;
 }
 
-load_config_local();
 load_config_env_overrides();
+load_config_local();
+reload_config_local();
