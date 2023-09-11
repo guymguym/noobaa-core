@@ -25,7 +25,7 @@ function isDirectory(ent) {
  */
 class BucketSpaceFS {
 
-    constructor({fs_root}) {
+    constructor({ fs_root }) {
         this.fs_root = fs_root;
         this.fs_context = {
             uid: process.getuid(),
@@ -36,11 +36,50 @@ class BucketSpaceFS {
     }
 
     async read_account_by_access_key({ access_key }) {
-        return {};
+        return {
+            name: new SensitiveString('nsfs'),
+            email: new SensitiveString('nsfs'),
+            access_keys: [{
+                access_key: new SensitiveString(access_key),
+                secret_key: new SensitiveString(access_key),
+            }],
+            has_login: false,
+            has_s3_access: true,
+            allow_bucket_creation: true,
+            nsfs_account_config: {
+                uid: this.fs_context.uid,
+                gid: this.fs_context.gid,
+                new_buckets_path: "/",
+                nsfs_only: true,
+            }
+        };
     }
 
     async read_bucket_sdk_info({ name }) {
-        return {};
+        const nsr = {
+            resource: { fs_root_path: this.fs_root },
+            path: name,
+        };
+        return {
+            name: new SensitiveString(name),
+            s3_policy: {
+                version: '2012-10-17',
+                statement: [{
+                    effect: 'allow',
+                    action: ['*'],
+                    resource: ['*'],
+                    principal: [new SensitiveString('*')],
+                }]
+            },
+            system_owner: new SensitiveString('nsfs'),
+            bucket_owner: new SensitiveString('nsfs'),
+            bucket_info: {},
+            namespace: {
+                read_resources: [nsr],
+                write_resource: nsr,
+                should_create_underlying_storage: true,
+            },
+        };
     }
 
 
@@ -73,15 +112,15 @@ class BucketSpaceFS {
                 throw new S3Error(S3Error.NoSuchBucket);
             }
             const owner_account = {
-                email: new SensitiveString('nsfs@noobaa.io'),
-                id: '12345678',
+                email: new SensitiveString('nsfs'),
+                id: '1',
             };
             const nsr = {
                 resource: 'nsfs',
                 path: '',
             };
             return {
-                name,
+                name: new SensitiveString(name),
                 owner_account,
                 namespace: {
                     read_resources: [nsr],

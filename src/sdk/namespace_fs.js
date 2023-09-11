@@ -843,6 +843,7 @@ class NamespaceFS {
             await this._check_path_in_bucket_boundaries(fs_context, file_path);
             await this._load_bucket(params, fs_context);
             const stat = await nb_native().fs.stat(fs_context, file_path);
+            if (isDirectory(stat)) throw error_utils.new_error_code('ENOENT', 'NoSuchKey');
             this._throw_if_delete_marker(stat);
             return this._get_object_info(params.bucket, params.key, stat, params.version_id || 'null');
         } catch (err) {
