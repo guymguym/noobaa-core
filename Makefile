@@ -2,6 +2,7 @@ CONTAINER_ENGINE?=$(shell docker version >/dev/null 2>&1 && echo docker)
 ifeq ($(CONTAINER_ENGINE),)
 	CONTAINER_ENGINE=$(shell podman version >/dev/null 2>&1 && echo podman)
 endif
+CONTAINER_PLATFORM_FLAG?="--platform=linux/amd64"
 
 GIT_COMMIT?="$(shell git rev-parse HEAD | head -c 7)"
 NAME_POSTFIX?="$(shell ${CONTAINER_ENGINE} ps -a | wc -l | xargs)"
@@ -54,21 +55,21 @@ all: tester noobaa
 
 builder: assert-container-engine
 	@echo "\033[1;34mStarting Builder $(CONTAINER_ENGINE) build.\033[0m"
-	$(CONTAINER_ENGINE) build $(CPUSET) -f src/deploy/NVA_build/builder.Dockerfile $(CACHE_FLAG) $(NETWORK_FLAG) -t noobaa-builder .
+	$(CONTAINER_ENGINE) build $(CONTAINER_PLATFORM_FLAG) $(CPUSET) -f src/deploy/NVA_build/builder.Dockerfile $(CACHE_FLAG) $(NETWORK_FLAG) -t noobaa-builder .
 	$(CONTAINER_ENGINE) tag noobaa-builder $(BUILDER_TAG)
 	@echo "\033[1;32mBuilder done.\033[0m"
 .PHONY: builder
 
 base: builder
 	@echo "\033[1;34mStarting Base $(CONTAINER_ENGINE) build.\033[0m"
-	$(CONTAINER_ENGINE) build $(CPUSET) -f src/deploy/NVA_build/Base.Dockerfile $(CACHE_FLAG) $(NETWORK_FLAG) -t noobaa-base . $(REDIRECT_STDOUT)
+	$(CONTAINER_ENGINE) build $(CONTAINER_PLATFORM_FLAG) $(CPUSET) -f src/deploy/NVA_build/Base.Dockerfile $(CACHE_FLAG) $(NETWORK_FLAG) -t noobaa-base . $(REDIRECT_STDOUT)
 	$(CONTAINER_ENGINE) tag noobaa-base $(NOOBAA_BASE_TAG)
 	@echo "\033[1;32mBase done.\033[0m"
 .PHONY: base
 
 tester: noobaa
 	@echo "\033[1;34mStarting Tester $(CONTAINER_ENGINE) build.\033[0m"
-	$(CONTAINER_ENGINE) build $(CPUSET) -f src/deploy/NVA_build/Tests.Dockerfile $(CACHE_FLAG) $(NETWORK_FLAG) -t noobaa-tester . $(REDIRECT_STDOUT)
+	$(CONTAINER_ENGINE) build $(CONTAINER_PLATFORM_FLAG) $(CPUSET) -f src/deploy/NVA_build/Tests.Dockerfile $(CACHE_FLAG) $(NETWORK_FLAG) -t noobaa-tester . $(REDIRECT_STDOUT)
 	$(CONTAINER_ENGINE) tag noobaa-tester $(TESTER_TAG)
 	@echo "\033[1;32mTester done.\033[0m"
 .PHONY: tester
@@ -125,7 +126,7 @@ tests: test #alias for test
 
 noobaa: base
 	@echo "\033[1;34mStarting NooBaa $(CONTAINER_ENGINE) build.\033[0m"
-	$(CONTAINER_ENGINE) build $(CPUSET) -f src/deploy/NVA_build/NooBaa.Dockerfile $(CACHE_FLAG) $(NETWORK_FLAG) -t noobaa --build-arg GIT_COMMIT=$(GIT_COMMIT) . $(REDIRECT_STDOUT)
+	$(CONTAINER_ENGINE) build $(CONTAINER_PLATFORM_FLAG) $(CPUSET) -f src/deploy/NVA_build/NooBaa.Dockerfile $(CACHE_FLAG) $(NETWORK_FLAG) -t noobaa --build-arg GIT_COMMIT=$(GIT_COMMIT) . $(REDIRECT_STDOUT)
 	$(CONTAINER_ENGINE) tag noobaa $(NOOBAA_TAG)
 	@echo "\033[1;32mNooBaa done.\033[0m"
 .PHONY: noobaa
@@ -133,7 +134,7 @@ noobaa: base
 # This rule builds a container image that includes developer tools
 # which allows to build and debug the project.
 nbdev:
-	$(CONTAINER_ENGINE) build $(CPUSET) -f src/deploy/NVA_build/dev.Dockerfile $(CACHE_FLAG) -t nbdev --build-arg GIT_COMMIT=$(GIT_COMMIT) . $(REDIRECT_STDOUT)
+	$(CONTAINER_ENGINE) build $(CONTAINER_PLATFORM_FLAG) $(CPUSET) -f src/deploy/NVA_build/dev.Dockerfile $(CACHE_FLAG) -t nbdev --build-arg GIT_COMMIT=$(GIT_COMMIT) . $(REDIRECT_STDOUT)
 	@echo "\033[1;32mImage 'nbdev' is ready.\033[0m"
 	@echo "Usage: docker run -it nbdev"
 .PHONY: nbdev
