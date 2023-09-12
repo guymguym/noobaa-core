@@ -1,3 +1,5 @@
+oc rsh -n openshift-storage -c db noobaa-db-pg-0 df -h
+
 oc rsh -n openshift-storage -c db noobaa-db-pg-0 psql nbcore -P pager=off <<EOF
 \l+
 \d+
