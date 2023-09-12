@@ -233,6 +233,12 @@ class NamespaceFS {
     }
 
     run_update_issues_report(object_sdk, err) {
+
+        if (config.HOTFIX_DISABLE_NSFS_UPDATE_ISSUES_REPORT) {
+            dbg.log0('update_issues_report disabled:', this.namespace_resource_id, err);
+            return;
+        }
+
         //We want to avoid the report when we have no error code.
         if (!err.code) return;
         //In standalone, we want to avoid the report.
@@ -1007,20 +1013,20 @@ class NamespaceFS {
             const entries = await nb_native().fs.readdir(fs_context, params.mpu_path);
             const multiparts = await Promise.all(
                 entries
-                .filter(e => e.name.startsWith('part-'))
-                .map(async e => {
-                    const num = Number(e.name.slice('part-'.length));
-                    const part_path = path.join(params.mpu_path, e.name);
-                    const stat = await nb_native().fs.stat(fs_context, part_path);
-                    const fs_xattr =
-                        config.NSFS_CALCULATE_MD5 ? await this._get_fs_xattr_from_path(fs_context, part_path) : undefined;
-                    return {
-                        num,
-                        size: stat.size,
-                        etag: this._get_etag(stat, fs_xattr),
-                        last_modified: new Date(stat.mtime),
-                    };
-                })
+                    .filter(e => e.name.startsWith('part-'))
+                    .map(async e => {
+                        const num = Number(e.name.slice('part-'.length));
+                        const part_path = path.join(params.mpu_path, e.name);
+                        const stat = await nb_native().fs.stat(fs_context, part_path);
+                        const fs_xattr =
+                            config.NSFS_CALCULATE_MD5 ? await this._get_fs_xattr_from_path(fs_context, part_path) : undefined;
+                        return {
+                            num,
+                            size: stat.size,
+                            etag: this._get_etag(stat, fs_xattr),
+                            last_modified: new Date(stat.mtime),
+                        };
+                    })
             );
             return {
                 is_truncated: false,

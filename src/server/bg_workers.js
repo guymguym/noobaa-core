@@ -96,11 +96,13 @@ function run_master_workers() {
         run_immediate: true
     }, stats_aggregator.background_worker);
 
-    register_bg_worker(new NamespaceMonitor({
-        name: 'namespace_monitor',
-        client: server_rpc.client,
-        should_monitor: nsr => !nsr.nsfs_config,
-    }));
+    if (!config.HOTFIX_DISABLE_NAMESPACE_MONITOR) {
+        register_bg_worker(new NamespaceMonitor({
+            name: 'namespace_monitor',
+            client: server_rpc.client,
+            should_monitor: nsr => !nsr.nsfs_config,
+        }));
+    }
 
     if (config.REPLICATION_ENABLED) {
         register_bg_worker(new ReplicationScanner({
