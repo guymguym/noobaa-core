@@ -155,7 +155,7 @@ async function start_endpoint(options = {}) {
 
         await prom_reporting.start_server(config.EP_METRICS_SERVER_PORT);
 
-        if (internal_rpc_client) {
+        if (internal_rpc_client && !config.HOTFIX_DISABLE_NAMESPACE_MONITOR) {
             // Register a bg monitor on the endpoint
             background_scheduler.register_bg_worker(new NamespaceMonitor({
                 name: 'namespace_fs_monitor',

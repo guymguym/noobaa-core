@@ -112,7 +112,7 @@ function run_master_workers() {
     } else {
         dbg.warn('REPLICATION NOT ENABLED');
     }
-    if (process.env.NOOBAA_DISABLE_AGGREGATOR !== "true") {
+    if (process.env.NOOBAA_DISABLE_AGGREGATOR !== "true" && !config.HOTFIX_DISABLE_MD_AGGREGATOR) {
         register_bg_worker({
             name: 'md_aggregator',
             delay: config.MD_AGGREGATOR_INTERVAL
