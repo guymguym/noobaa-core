@@ -13,6 +13,7 @@ const dbg = require('./src/util/debug_module')(__filename);
 
 config.HOTFIX_DISABLE_NSFS_UPDATE_ISSUES_REPORT = true;
 config.HOTFIX_DISABLE_NAMESPACE_MONITOR = true;
+config.HOTFIX_DISABLE_MD_AGGREGATOR = true;
 config.HOTFIX_DISABLE_INVALID_SCHEMA_DB_INSPECT = true;
 
 /////////////////////////
