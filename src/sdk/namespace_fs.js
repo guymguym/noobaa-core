@@ -724,6 +724,10 @@ class NamespaceFS {
                         dbg.warn('NamespaceFS: COPY using link failed with:', e);
                         fs_xattr = await this._copy_stream(source_file_path, upload_path, fs_context, fs_xattr);
                     }
+                    const stat = await nb_native().fs.stat(fs_context, upload_path);
+                    await this._move_to_dest(fs_context, upload_path, file_path);
+                    if (config.NSFS_TRIGGER_FSYNC) await nb_native().fs.fsync(fs_context, path.dirname(upload_path));
+                    return { etag: this._get_etag(stat, fs_xattr) };
                 } else {
                     // TODO: Take up only as much as we need (requires fine-tune of the semaphore inside the _upload_stream)
                     // Currently we are taking config.NSFS_BUF_SIZE for any sized upload (1KB upload will take a full buffer from semaphore)
