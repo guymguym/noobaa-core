@@ -203,7 +203,8 @@ function _aws_request(req, region, service) {
     const v2_signature = _.isUndefined(region) && _.isUndefined(service);
     const u = url.parse(req.originalUrl, true);
     const pathname = service === 's3' ?
-        u.pathname :
+        // AWS.util.uriEscapePath(u.pathname) :
+        u.pathname.split('/').map(c => AWS.util.uriEscape(decodeURIComponent(c))).join('/') :
         path.normalize(decodeURI(u.pathname));
     const query = _.omit(
         req.query,
