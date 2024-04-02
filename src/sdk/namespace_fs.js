@@ -24,8 +24,7 @@ const nb_native = require('../util/nb_native');
 const RpcError = require('../rpc/rpc_error');
 const { S3Error } = require('../endpoint/s3/s3_errors');
 const NoobaaEvent = require('../manage_nsfs/manage_nsfs_events_utils').NoobaaEvent;
-const { PersistentLogger } = require('../util/persistent_logger');
-const { GlacierBackend } = require('./nsfs_glacier_backend/backend');
+const { GlacierBackend } = require('./glacier_backend');
 
 const multi_buffer_pool = new buffer_utils.MultiSizeBuffersPool({
     sorted_buf_sizes: [
@@ -101,7 +100,7 @@ function sort_entries_by_name(a, b) {
     return 0;
 }
 
-function _get_version_id_by_stat({ino, mtimeNsBigint}) {
+function _get_version_id_by_stat({ ino, mtimeNsBigint }) {
     // TODO: GPFS might require generation number to be added to version_id
     return 'mtime-' + mtimeNsBigint.toString(36) + '-ino-' + ino.toString(36);
 }
@@ -403,12 +402,12 @@ const versions_dir_cache = new LRUCache({
             const versions_dir_path = path.normalize(path.join(dir_path, '/', HIDDEN_VERSIONS_PATH));
             const new_versions_stat = await nb_native().fs.stat(fs_context, versions_dir_path);
             return (new_stat.ino === stat.ino &&
-                    new_stat.mtimeNsBigint === stat.mtimeNsBigint &&
-                    new_versions_stat.ino === ver_dir_stat.ino &&
-                    new_versions_stat.mtimeNsBigint === ver_dir_stat.mtimeNsBigint);
+                new_stat.mtimeNsBigint === stat.mtimeNsBigint &&
+                new_versions_stat.ino === ver_dir_stat.ino &&
+                new_versions_stat.mtimeNsBigint === ver_dir_stat.mtimeNsBigint);
         } else {
             return (new_stat.ino === stat.ino &&
-            new_stat.mtimeNsBigint === stat.mtimeNsBigint);
+                new_stat.mtimeNsBigint === stat.mtimeNsBigint);
         }
     },
     item_usage: ({ usage }, dir_path) => usage,
@@ -443,8 +442,7 @@ class NamespaceFS {
         stats,
         force_md5_etag,
     }) {
-        dbg.log0('NamespaceFS: buffers_pool ',
-            multi_buffer_pool.pools);
+        dbg.log0('NamespaceFS: buffers_pool ', multi_buffer_pool.pools);
         this.bucket_path = path.resolve(bucket_path);
         this.fs_backend = fs_backend;
         this.bucket_id = bucket_id;
@@ -454,6 +452,10 @@ class NamespaceFS {
         this.stats = stats;
         this.force_md5_etag = force_md5_etag;
         this.warmup_buffer = nb_native().fs.dio_buffer_alloc(4096);
+        this.glacier_queue_producer =
+            config.NSFS_GLACIER_ENABLED && config.NSFS_GLACIER_LOGS_ENABLED ?
+                GlacierBackend.get().queue().producer() :
+                undefined;
     }
 
     /**
@@ -726,7 +728,7 @@ class NamespaceFS {
                         if (version_id_marker) start_marker = version_id_marker;
                         marker_index = _.findIndex(
                             sorted_entries,
-                            {name: start_marker}
+                            { name: start_marker }
                         ) + 1;
                     } else {
                         marker_index = _.sortedLastIndexBy(
@@ -775,7 +777,7 @@ class NamespaceFS {
                 try {
                     dbg.warn('NamespaceFS: open dir streaming', dir_path, 'size', cached_dir.stat.size);
                     dir_handle = await nb_native().fs.opendir(fs_context, dir_path); //, { bufferSize: 128 });
-                    for (;;) {
+                    for (; ;) {
                         const dir_entry = await dir_handle.read(fs_context);
                         if (!dir_entry) break;
                         await process_entry(dir_entry);
@@ -900,7 +902,7 @@ class NamespaceFS {
                 } catch (err) {
                     //failed to get object
                     new NoobaaEvent(NoobaaEvent.OBJECT_GET_FAILED).create_event(params.key,
-                                            {bucket_path: this.bucket_path, object_name: params.key}, err);
+                        { bucket_path: this.bucket_path, object_name: params.key }, err);
                     dbg.log0('NamespaceFS: read_object_stream couldnt find dir content xattr', err);
                 }
             }
@@ -1031,7 +1033,7 @@ class NamespaceFS {
             dbg.log0('NamespaceFS: read_object_stream error file', file_path, err);
             //failed to get object
             new NoobaaEvent(NoobaaEvent.OBJECT_STREAM_GET_FAILED).create_event(params.key,
-                                    {bucket_path: this.bucket_path, object_name: params.key}, err);
+                { bucket_path: this.bucket_path, object_name: params.key }, err);
             throw this._translate_object_error_codes(err);
 
         } finally {
@@ -1052,7 +1054,7 @@ class NamespaceFS {
             } catch (err) {
                 //failed to get object
                 new NoobaaEvent(NoobaaEvent.OBJECT_CLEANUP_FAILED).create_event(params.key,
-                                        { bucket_path: this.bucket_path, object_name: params.key }, err);
+                    { bucket_path: this.bucket_path, object_name: params.key }, err);
                 dbg.warn('NamespaceFS: read_object_stream buffer pool cleanup error', err);
             }
         }
@@ -1095,7 +1097,7 @@ class NamespaceFS {
             this.run_update_issues_report(object_sdk, err);
             //filed to put object
             new NoobaaEvent(NoobaaEvent.OBJECT_UPLOAD_FAILED).create_event(params.key,
-                {bucket_path: this.bucket_path, object_name: params.key}, err);
+                { bucket_path: this.bucket_path, object_name: params.key }, err);
             dbg.warn('NamespaceFS: upload_object buffer pool cleanup error', err);
             throw this._translate_object_error_codes(err);
         } finally {
@@ -1208,7 +1210,7 @@ class NamespaceFS {
     // xattr_copy = false implies on non server side copy fallback copy (copy status = FALLBACK)
     // target file can be undefined when it's a folder created and size is 0
     async _finish_upload({ fs_context, params, open_mode, target_file, upload_path, file_path, digest = undefined,
-            copy_res = undefined, offset }) {
+        copy_res = undefined, offset }) {
         const part_upload = file_path === upload_path;
         const same_inode = params.copy_source && copy_res === copy_status_enum.SAME_INODE;
         const is_dir_content = this._is_directory_content(file_path, params.key);
@@ -1246,7 +1248,12 @@ class NamespaceFS {
             });
 
             if (params.storage_class === s3_utils.STORAGE_CLASS_GLACIER) {
-                await this.append_to_migrate_wal(file_path);
+                if (this.glacier_queue_producer) {
+                    await this.glacier_queue_producer.send({
+                        topic: GlacierBackend.MIGRATE_WAL_NAME,
+                        messages: [{ file: file_path }],
+                    });
+                }
             }
         }
         if (fs_xattr && !is_dir_content) await target_file.replacexattr(fs_context, fs_xattr);
@@ -1305,7 +1312,7 @@ class NamespaceFS {
     async _move_to_dest(fs_context, source_path, dest_path, target_file, open_mode, key) {
         let retries = config.NSFS_RENAME_RETRIES;
         // will retry renaming a file in case of parallel deleting of the destination path
-        for (;;) {
+        for (; ;) {
             try {
                 await native_fs_utils._make_path_dirs(dest_path, fs_context);
                 if (this._is_versioning_disabled()) {
@@ -1350,7 +1357,7 @@ class NamespaceFS {
         let gpfs_options;
         const is_gpfs = native_fs_utils._is_gpfs(fs_context);
         let retries = config.NSFS_RENAME_RETRIES;
-        for (;;) {
+        for (; ;) {
             try {
                 const new_ver_info = !is_gpfs && await this._get_version_info(fs_context, new_ver_tmp_path);
                 // get latest version_id if exists
@@ -1487,8 +1494,8 @@ class NamespaceFS {
                 fs_context,
                 path.join(params.mpu_path, 'create_object_upload'),
                 Buffer.from(create_params), {
-                    mode: native_fs_utils.get_umasked_mode(config.BASE_MODE_FILE),
-                },
+                mode: native_fs_utils.get_umasked_mode(config.BASE_MODE_FILE),
+            },
             );
             return { obj_id: params.obj_id };
         } catch (err) {
@@ -1583,18 +1590,18 @@ class NamespaceFS {
             const entries = await nb_native().fs.readdir(fs_context, params.mpu_path);
             const multiparts = await Promise.all(
                 entries
-                .filter(e => e.name.startsWith('part-'))
-                .map(async e => {
-                    const num = Number(e.name.slice('part-'.length));
-                    const part_path = path.join(params.mpu_path, e.name);
-                    const stat = await nb_native().fs.stat(fs_context, part_path);
-                    return {
-                        num,
-                        size: stat.size,
-                        etag: this._get_etag(stat),
-                        last_modified: new Date(stat.mtime),
-                    };
-                })
+                    .filter(e => e.name.startsWith('part-'))
+                    .map(async e => {
+                        const num = Number(e.name.slice('part-'.length));
+                        const part_path = path.join(params.mpu_path, e.name);
+                        const stat = await nb_native().fs.stat(fs_context, part_path);
+                        return {
+                            num,
+                            size: stat.size,
+                            etag: this._get_etag(stat),
+                            last_modified: new Date(stat.mtime),
+                        };
+                    })
             );
             return {
                 is_truncated: false,
@@ -1884,14 +1891,14 @@ class NamespaceFS {
             dbg.error(`NamespaceFS.delete_object_tagging: failed in dir ${file_path} with error: `, err);
             throw this._translate_object_error_codes(err);
         }
-        return {version_id: params.version_id};
+        return { version_id: params.version_id };
     }
 
     async put_object_tagging(params, object_sdk) {
         const fs_xattr = {};
         const tagging = params.tagging && Object.fromEntries(params.tagging.map(tag => ([tag.key, tag.value])));
         for (const [xattr_key, xattr_value] of Object.entries(tagging)) {
-              fs_xattr[XATTR_NOOBAA_CUSTOM_PREFIX + xattr_key] = xattr_value;
+            fs_xattr[XATTR_NOOBAA_CUSTOM_PREFIX + xattr_key] = xattr_value;
         }
         const file_path = this._get_file_path(params);
         const fs_context = this.prepare_fs_context(object_sdk);
@@ -1997,10 +2004,15 @@ class NamespaceFS {
             }
 
             if (restore_status.state === GlacierBackend.RESTORE_STATUS_CAN_RESTORE) {
-                // First add it to the log and then add the extended attribute as if we fail after
+                // First add it to the queue and then add the extended attribute as if we fail after
                 // this point then the restore request can be triggered again without issue but
                 // the reverse doesn't works.
-                await this.append_to_restore_wal(file_path);
+                if (this.glacier_queue_producer) {
+                    await this.glacier_queue_producer.send({
+                        topic: GlacierBackend.RESTORE_WAL_NAME,
+                        messages: [{ file: file_path }],
+                    });
+                }
 
                 await file.replacexattr(fs_context, {
                     [GlacierBackend.XATTR_RESTORE_REQUEST]: params.days.toString(),
@@ -2041,7 +2053,7 @@ class NamespaceFS {
     // INTERNALS //
     ///////////////
 
-    _get_file_path({key}) {
+    _get_file_path({ key }) {
         // not allowing keys with dots follow by slash which can be treated as relative paths and "leave" the bucket_path
         // We are not using `path.isAbsolute` as path like '/../..' will return true and we can still "leave" the bucket_path
         if (key.includes('./')) throw new Error('Bad relative path key ' + key);
@@ -2175,7 +2187,7 @@ class NamespaceFS {
      * @param {fs.Dirent} ent
      * @returns {string}
      */
-     _get_version_entry_key(dir_key, ent) {
+    _get_version_entry_key(dir_key, ent) {
         if (ent.name === config.NSFS_FOLDER_OBJECT_NAME) return dir_key;
         return dir_key + HIDDEN_VERSIONS_PATH + '/' + ent.name;
     }
@@ -2203,7 +2215,7 @@ class NamespaceFS {
      * @param {nb.NativeFSStats} stat 
      * @returns {nb.ObjectInfo}
      */
-     _get_object_info(bucket, key, stat, return_version_id, isDir, is_latest = true) {
+    _get_object_info(bucket, key, stat, return_version_id, isDir, is_latest = true) {
         const etag = this._get_etag(stat);
         const create_time = stat.mtime.getTime();
         const encryption = this._get_encryption_info(stat);
@@ -2229,7 +2241,7 @@ class NamespaceFS {
             is_latest,
             delete_marker,
             storage_class,
-            restore_status: GlacierBackend.get_restore_status(stat.xattr, new Date(), this._get_file_path({key})),
+            restore_status: GlacierBackend.get_restore_status(stat.xattr, new Date(), this._get_file_path({ key })),
             xattr: to_xattr(stat.xattr),
 
             // temp:
@@ -2483,7 +2495,7 @@ class NamespaceFS {
     }
 
     _get_version_id_by_xattr(stat) {
-       return (stat && stat.xattr[XATTR_VERSION_ID]) || 'null';
+        return (stat && stat.xattr[XATTR_VERSION_ID]) || 'null';
     }
 
     // returns version path of the form bucket_path/dir/.versions/{key}_{version_id}
@@ -2578,7 +2590,7 @@ class NamespaceFS {
         let retries = config.NSFS_RENAME_RETRIES;
         const is_gpfs = native_fs_utils._is_gpfs(fs_context);
         const latest_version_path = this._get_file_path({ key });
-        for (;;) {
+        for (; ;) {
             let file_path;
             let gpfs_options;
             try {
@@ -2689,7 +2701,7 @@ class NamespaceFS {
         const prev_version_id = deleted_latest && deleted_version_info.prev_version_id;
 
         let retries = config.NSFS_RENAME_RETRIES;
-        for (;;) {
+        for (; ;) {
             try {
                 const latest_version_info = await this._get_version_info(fs_context, latest_ver_path);
                 if (latest_version_info) return;
@@ -2742,7 +2754,7 @@ class NamespaceFS {
         const is_gpfs = native_fs_utils._is_gpfs(fs_context);
         let retries = config.NSFS_RENAME_RETRIES;
         let latest_ver_info;
-        for (;;) {
+        for (; ;) {
             try {
                 // get latest version_id if exists
                 latest_ver_info = await this._get_version_info(fs_context, latest_ver_path);
@@ -2761,9 +2773,9 @@ class NamespaceFS {
                     const bucket_tmp_dir_path = path.join(this.bucket_path, this.get_bucket_tmpdir());
                     if (this._is_versioning_enabled() || suspended_and_latest_is_not_null) {
                         await native_fs_utils._make_path_dirs(versioned_path, fs_context);
-                         await native_fs_utils.safe_move(fs_context, latest_ver_path, versioned_path, latest_ver_info,
+                        await native_fs_utils.safe_move(fs_context, latest_ver_path, versioned_path, latest_ver_info,
                             gpfs_options && gpfs_options.delete_version, bucket_tmp_dir_path);
-                         if (suspended_and_latest_is_not_null) {
+                        if (suspended_and_latest_is_not_null) {
                             // remove a version (or delete marker) with null version ID from .versions/ (if exists)
                             await this._delete_null_version_from_versions_directory(params.key, fs_context);
                         }
@@ -2799,7 +2811,7 @@ class NamespaceFS {
         const null_versioned_path = this._get_version_path(key, NULL_VERSION_ID);
         await this._check_path_in_bucket_boundaries(fs_context, null_versioned_path);
 
-        for (;;) {
+        for (; ;) {
             try {
                 const null_versioned_path_info = await this._get_version_info(fs_context, null_versioned_path);
                 dbg.log1('Namespace_fs._delete_null_version_from_versions_directory:', null_versioned_path, null_versioned_path_info);
@@ -2827,7 +2839,7 @@ class NamespaceFS {
         let retries = config.NSFS_RENAME_RETRIES;
         let upload_params;
         let delete_marker_version_id;
-        for (;;) {
+        for (; ;) {
             try {
                 upload_params = await this._start_upload(fs_context, undefined, undefined, params, 'w');
 
@@ -2892,12 +2904,12 @@ class NamespaceFS {
 
             // find max past version by comparing the mtimeNsBigint val
             const max_entry_info = arr.reduce((acc, cur) => (cur && cur.mtimeNsBigint > acc.mtimeNsBigint ? cur : acc),
-                                        { mtimeNsBigint: BigInt(0), name: undefined });
+                { mtimeNsBigint: BigInt(0), name: undefined });
             return max_entry_info.mtimeNsBigint > BigInt(0) &&
                 this._get_version_info(fs_context, path.join(versions_dir, max_entry_info.name));
         } catch (err) {
             dbg.warn('namespace_fs.find_max_version_past: .versions/ folder could not be found', err);
-       }
+        }
     }
 
     _is_hidden_version_path(dir_key) {
@@ -2996,47 +3008,7 @@ class NamespaceFS {
         return false;
     }
 
-    async append_to_migrate_wal(entry) {
-        if (!config.NSFS_GLACIER_LOGS_ENABLED) return;
-
-        await NamespaceFS.migrate_wal.append(entry);
-    }
-
-    async append_to_restore_wal(entry) {
-        if (!config.NSFS_GLACIER_LOGS_ENABLED) return;
-
-        await NamespaceFS.restore_wal.append(entry);
-    }
-
-    static get migrate_wal() {
-        if (!NamespaceFS._migrate_wal) {
-            NamespaceFS._migrate_wal = new PersistentLogger(config.NSFS_GLACIER_LOGS_DIR, GlacierBackend.MIGRATE_WAL_NAME, {
-                poll_interval: config.NSFS_GLACIER_LOGS_POLL_INTERVAL,
-                locking: 'SHARED',
-            });
-        }
-
-        return NamespaceFS._migrate_wal;
-    }
-
-    static get restore_wal() {
-        if (!NamespaceFS._restore_wal) {
-            NamespaceFS._restore_wal = new PersistentLogger(config.NSFS_GLACIER_LOGS_DIR, GlacierBackend.RESTORE_WAL_NAME, {
-                poll_interval: config.NSFS_GLACIER_LOGS_POLL_INTERVAL,
-                locking: 'SHARED',
-            });
-        }
-
-        return NamespaceFS._restore_wal;
-    }
 }
-
-/** @type {PersistentLogger} */
-NamespaceFS._migrate_wal = null;
-
-/** @type {PersistentLogger} */
-NamespaceFS._restore_wal = null;
 
 module.exports = NamespaceFS;
 module.exports.multi_buffer_pool = multi_buffer_pool;
-

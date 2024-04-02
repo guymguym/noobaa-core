@@ -1,11 +1,36 @@
 /* Copyright (C) 2024 NooBaa */
 'use strict';
 
-const nb_native = require('../../util/nb_native');
-const s3_utils = require('../../endpoint/s3/s3_utils');
-const dbg = require('../../util/debug_module')(__filename);
+const config = require('../../config');
+const dbg = require('../util/debug_module')(__filename);
+const s3_utils = require('../endpoint/s3/s3_utils');
+const nb_native = require('../util/nb_native');
+const { FSQueue } = require('../util/fs_queue');
+const { get_process_fs_context } = require('../util/native_fs_utils');
 
+/**
+ * @typedef {import('../util/fs_queue').ConsumerBatch} ConsumerBatch 
+ */
+
+/**
+ * 
+ */
 class GlacierBackend {
+
+    /**
+     * @returns {GlacierBackend}
+     */
+    static get() {
+        if (GlacierBackend._backend) return GlacierBackend._backend;
+        const backend_type = config.NSFS_GLACIER_BACKEND;
+        if (backend_type === 'TAPECLOUD') {
+            const { TapeCloudGlacierBackend } = require('./glacier_tapecloud');
+            GlacierBackend._backend = new TapeCloudGlacierBackend();
+            return GlacierBackend._backend;
+        }
+        throw new Error('invalid backend type provide');
+    }
+
     // These names start with the word 'timestamp' so as to assure
     // that it acts like a 'namespace' for the these kind of files.
     //
@@ -49,40 +74,57 @@ class GlacierBackend {
     /** @type {nb.RestoreState} */
     static RESTORE_STATUS_RESTORED = 'RESTORED';
 
-    /**
-     * migrate must take a file name which will have newline seperated
-     * entries of filenames which needs to be migrated to GLACIER and
-     * should perform migration of those files if feasible.
-     * 
-     * The function should return false if it needs the log file to be
-     * preserved.
-     * 
-     * NOTE: This needs to be implemented by each backend.
-     * @param {nb.NativeFSContext} fs_context
-     * @param {string} log_file log filename
-     * @param {(entry: string) => Promise<void>} failure_recorder
-     * @returns {Promise<boolean>}
-     */
-    async migrate(fs_context, log_file, failure_recorder) {
-        throw new Error('Unimplementented');
+
+    async migrate(fs_context) {
+        await this.queue().consumer().run({
+            topic: GlacierBackend.MIGRATE_WAL_NAME,
+            eachBatch: async ({ batch }) => this.migrate_batch(batch)
+        });
+    }
+
+    async restore(fs_context) {
+        await this.queue().consumer().run({
+            topic: GlacierBackend.RESTORE_WAL_NAME,
+            eachBatch: async ({ batch }) => this.restore_batch(batch)
+        });
     }
 
     /**
-     * restore must take a file name which will have newline seperated
-     * entries of filenames which needs to be restored from GLACIER and
-     * should perform restore of those files if feasible
-     * 
-     * The function should return false if it needs the log file to be
-     * preserved.
-     * 
-     * NOTE: This needs to be implemented by each backend.
-     * @param {nb.NativeFSContext} fs_context
-     * @param {string} log_file log filename
-     * @param {(entry: string) => Promise<void>} failure_recorder
-     * @returns {Promise<boolean>}
+     * @param {ConsumerBatch} batch 
      */
-    async restore(fs_context, log_file, failure_recorder) {
+    async migrate_batch(batch) {
         throw new Error('Unimplementented');
+        // open text file
+        // await batch.forEach(async message => {
+        // if (should_restore) {
+        //      file.write
+        // }
+        // });
+        // call eeadm
+        // task show for failures
+        // close text file
+    }
+
+    /**
+     * @param {ConsumerBatch} batch 
+     */
+    async restore_batch(batch) {
+        throw new Error('Unimplementented');
+        // open text file
+        // await batch.forEach(async message => {
+        // if (should_restore) {
+        //      file.write
+        // }
+        // });
+        // call eeadm
+        // task show for failures
+        // read the text file again
+        // NewlineReader.forEach()
+        // if (should_resubmit / had failure) {
+        //      producer.send()
+        // }
+        // close text file
+
     }
 
     /**
@@ -271,6 +313,24 @@ class GlacierBackend {
 
         return restore_status.state === GlacierBackend.RESTORE_STATUS_ONGOING;
     }
+
+
+    /**
+     * @returns {FSQueue}
+     */
+    queue() {
+        if (!this._queue) {
+            this._queue = new FSQueue({
+                dir: config.NSFS_GLACIER_LOGS_DIR,
+                fs_context: get_process_fs_context(),
+            });
+        }
+        return this._queue;
+    }
+
 }
+
+/** @type {GlacierBackend} */
+GlacierBackend._backend = null;
 
 exports.GlacierBackend = GlacierBackend;

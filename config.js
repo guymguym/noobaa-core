@@ -752,11 +752,11 @@ config.NSFS_GLACIER_TAPECLOUD_BIN_DIR = '/opt/ibm/tapecloud/bin';
 
 // NSFS_GLACIER_MIGRATE_INTERVAL indicates the interval between runs
 // of `manage_nsfs glacier migrate`
-config.NSFS_GLACIER_MIGRATE_INTERVAL = 15 * 60 * 1000;
+config.NSFS_GLACIER_MIGRATE_INTERVAL = 10 * 60 * 1000;
 
 // NSFS_GLACIER_RESTORE_INTERVAL indicates the interval between runs
 // of `manage_nsfs glacier restore`
-config.NSFS_GLACIER_RESTORE_INTERVAL = 15 * 60 * 1000;
+config.NSFS_GLACIER_RESTORE_INTERVAL = 10 * 60 * 1000;
 
 // NSFS_GLACIER_EXPIRY_INTERVAL indicates the interval between runs
 // of `manage_nsfs glacier expiry`

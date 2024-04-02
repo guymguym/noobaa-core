@@ -2,12 +2,10 @@
 'use strict';
 
 const path = require('path');
-const { PersistentLogger } = require('../util/persistent_logger');
 const config = require('../../config');
 const nb_native = require('../util/nb_native');
-const { GlacierBackend } = require('../sdk/nsfs_glacier_backend/backend');
-const { getGlacierBackend } = require('../sdk/nsfs_glacier_backend/helper');
 const native_fs_utils = require('../util/native_fs_utils');
+const { GlacierBackend, getGlacierBackend } = require('../sdk/glacier_backend');
 
 const CLUSTER_LOCK = 'cluster.lock';
 const SCAN_LOCK = 'scan.lock';
@@ -18,24 +16,17 @@ async function process_migrations() {
     await lock_and_run(fs_context, CLUSTER_LOCK, async () => {
         const backend = getGlacierBackend();
 
-        if (
-            await backend.low_free_space() ||
-            await time_exceeded(fs_context, config.NSFS_GLACIER_MIGRATE_INTERVAL, GlacierBackend.MIGRATE_TIMESTAMP_FILE)
-        ) {
-            await run_glacier_migrations(fs_context, backend);
-            await record_current_time(fs_context, GlacierBackend.MIGRATE_TIMESTAMP_FILE);
-        }
-    });
-}
+        const is_low_free_space = await backend.low_free_space();
+        const is_time_exceeded = await time_exceeded(
+            fs_context,
+            config.NSFS_GLACIER_MIGRATE_INTERVAL,
+            GlacierBackend.MIGRATE_TIMESTAMP_FILE,
+        );
+        if (!is_low_free_space && !is_time_exceeded) return;
 
-/**
- * run_tape_migrations reads the migration WALs and attempts to migrate the
- * files mentioned in the WAL.
- * @param {nb.NativeFSContext} fs_context
- * @param {import('../sdk/nsfs_glacier_backend/backend').GlacierBackend} backend
- */
-async function run_glacier_migrations(fs_context, backend) {
-    await run_glacier_operation(fs_context, GlacierBackend.MIGRATE_WAL_NAME, backend.migrate.bind(backend));
+        await backend.migrate(fs_context);
+        await record_current_time(fs_context, GlacierBackend.MIGRATE_TIMESTAMP_FILE);
+    });
 }
 
 async function process_restores() {
@@ -44,35 +35,40 @@ async function process_restores() {
     await lock_and_run(fs_context, CLUSTER_LOCK, async () => {
         const backend = getGlacierBackend();
 
-        if (
-            await backend.low_free_space() ||
-            !(await time_exceeded(fs_context, config.NSFS_GLACIER_RESTORE_INTERVAL, GlacierBackend.RESTORE_TIMESTAMP_FILE))
-        ) return;
+        const is_low_free_space = await backend.low_free_space();
+        if (is_low_free_space) return;
 
+        const is_time_exceeded = await time_exceeded(
+            fs_context,
+            config.NSFS_GLACIER_RESTORE_INTERVAL,
+            GlacierBackend.RESTORE_TIMESTAMP_FILE,
+        );
+        if (!is_time_exceeded) return;
 
-        await run_glacier_restore(fs_context, backend);
+        await backend.restore(fs_context);
+        await backend.queue().consumer().run({
+            topic: GlacierBackend.RESTORE_WAL_NAME,
+            eachBatch: async ({ batch }) => backend.restore_batch(batch)
+        });
+
         await record_current_time(fs_context, GlacierBackend.RESTORE_TIMESTAMP_FILE);
     });
-}
-
-/**
- * run_tape_restore reads the restore WALs and attempts to restore the
- * files mentioned in the WAL.
- * @param {nb.NativeFSContext} fs_context 
- * @param {import('../sdk/nsfs_glacier_backend/backend').GlacierBackend} backend
- */
-async function run_glacier_restore(fs_context, backend) {
-    await run_glacier_operation(fs_context, GlacierBackend.RESTORE_WAL_NAME, backend.restore.bind(backend));
 }
 
 async function process_expiry() {
     const fs_context = native_fs_utils.get_process_fs_context();
 
     await lock_and_run(fs_context, SCAN_LOCK, async () => {
-        if (!(await time_exceeded(fs_context, config.NSFS_GLACIER_EXPIRY_INTERVAL, GlacierBackend.EXPIRY_TIMESTAMP_FILE))) return;
+        const backend = getGlacierBackend();
 
+        const is_time_exceeded = await time_exceeded(
+            fs_context,
+            config.NSFS_GLACIER_EXPIRY_INTERVAL,
+            GlacierBackend.EXPIRY_TIMESTAMP_FILE,
+        );
+        if (!is_time_exceeded) return;
 
-        await getGlacierBackend().expiry(fs_context);
+        await backend.expiry(fs_context);
         await record_current_time(fs_context, GlacierBackend.EXPIRY_TIMESTAMP_FILE);
     });
 }
@@ -115,24 +111,6 @@ async function record_current_time(fs_context, timestamp_file) {
     );
 }
 
-/**
- * run_glacier_operations takes a log_namespace and a callback and executes the
- * callback on each log file in that namespace. It will also generate a failure
- * log file and persist the failures in that log file.
- * @param {nb.NativeFSContext} fs_context 
- * @param {string} log_namespace 
- * @param {Function} cb 
- */
-async function run_glacier_operation(fs_context, log_namespace, cb) {
-    const log = new PersistentLogger(config.NSFS_GLACIER_LOGS_DIR, log_namespace, { locking: 'EXCLUSIVE' });
-    try {
-        await log.process(async (entry, failure_recorder) => cb(fs_context, entry, failure_recorder));
-    } catch (error) {
-        console.error('failed to process log in namespace:', log_namespace);
-    } finally {
-        await log.close();
-    }
-}
 
 /**
  * lock_and_run acquires a flock and calls the given callback after
