@@ -994,6 +994,14 @@ async function restart_services(services) {
     }
 }
 
+function is_root() {
+    return process.getuid() === 0;
+}
+
+function is_root_user_and_group() {
+    return process.getuid() === 0 && process.getgid() === 0;
+}
+
 
 // EXPORTS
 exports.IS_WIN = IS_WIN;
@@ -1032,3 +1040,5 @@ exports.get_process_parent_pid = get_process_parent_pid;
 exports.get_agent_platform_path = get_agent_platform_path;
 exports.discover_k8s_services = discover_k8s_services;
 exports.restart_services = restart_services;
+exports.is_root = is_root;
+exports.is_root_user_and_group = is_root_user_and_group;

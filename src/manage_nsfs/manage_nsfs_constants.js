@@ -37,7 +37,7 @@ const CONFIG_SUBDIRS = {
 };
 
 const GLOBAL_CONFIG_ROOT = 'config_root';
-const GLOBAL_CONFIG_OPTIONS = new Set([GLOBAL_CONFIG_ROOT, 'config_root_backend', 'debug']);
+const GLOBAL_CONFIG_OPTIONS = new Set([GLOBAL_CONFIG_ROOT, 'config_root_backend', 'debug', 'rootless']);
 const FROM_FILE = 'from_file';
 const ANONYMOUS = 'anonymous';
 
@@ -107,6 +107,7 @@ const OPTION_TYPE = {
     config_root: 'string',
     from_file: 'string',
     config_root_backend: 'string',
+    rootless: 'boolean',
     path: 'string',
     bucket_policy: 'string',
     new_name: 'string',
