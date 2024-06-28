@@ -38,7 +38,7 @@ const UPGRADE_ACTIONS = Object.freeze({
 });
 
 const CONFIG_ROOT_FLAG = 'config_root';
-const CLI_MUTUAL_OPTIONS = new Set([CONFIG_ROOT_FLAG, 'config_root_backend', 'debug']);
+const CLI_MUTUAL_OPTIONS = new Set([CONFIG_ROOT_FLAG, 'config_root_backend', 'debug', 'rootless']);
 const FROM_FILE = 'from_file';
 const ANONYMOUS = 'anonymous';
 
@@ -108,6 +108,7 @@ const OPTION_TYPE = {
     config_root: 'string',
     from_file: 'string',
     config_root_backend: 'string',
+    rootless: 'boolean',
     path: 'string',
     bucket_policy: 'string',
     new_name: 'string',

@@ -9,6 +9,7 @@ const config = require('../../config');
 const P = require('../util/promise');
 const nb_native = require('../util/nb_native');
 const { ConfigFS } = require('../sdk/config_fs');
+const os_utils = require('../util/os_utils');
 const cloud_utils = require('../util/cloud_utils');
 const native_fs_utils = require('../util/native_fs_utils');
 const mongo_utils = require('../util/mongo_utils');
@@ -30,14 +31,22 @@ let config_fs;
 
 async function main(argv = minimist(process.argv.slice(2))) {
     try {
-        if (process.getuid() !== 0 || process.getgid() !== 0) {
-            throw new Error('Root permissions required for Manage NSFS execution.');
-        }
         const type = argv._[0] || '';
         const action = argv._[1] || '';
         if (argv.help || argv.h) {
             return print_usage(type, action);
         }
+
+        const rootless = Boolean(argv.rootless); // by default must be root
+        if (!rootless && !os_utils.is_root_user_and_group()) {
+            console.error('Must run as root user and group (override with --rootless).');
+            return print_usage(type, action);
+        }
+        if (rootless && os_utils.is_root()) {
+            console.error('Running as root is not allowed in rootless mode (override with --rootless).');
+            return print_usage(type, action);
+        }
+
         const user_input_from_file = await manage_nsfs_validations.validate_input_types(type, action, argv);
         const user_input = user_input_from_file || argv;
         if (argv.debug) set_debug_level(argv.debug);
