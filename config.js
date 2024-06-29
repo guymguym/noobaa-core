@@ -8,13 +8,15 @@ const config = exports;
 
 const os = require('os');
 const fs = require('fs');
+const util = require('util');
 const path = require('path');
 const assert = require('assert');
-const _ = require('lodash');
-const util = require('util');
-const nsfs_schema_utils = require('./src/manage_nsfs/nsfs_schema_utils');
-const range_utils = require('./src/util/range_utils');
 const { EventEmitter } = require('events');
+const require_from_file = require('node:module').createRequire(__filename);
+
+const _ = require('lodash');
+const range_utils = require('./src/util/range_utils');
+const nsfs_schema_utils = require('./src/manage_nsfs/nsfs_schema_utils');
 
 config.event_emitter = new EventEmitter();
 
@@ -960,11 +962,7 @@ config.VACCUM_ANALYZER_INTERVAL = 86400000;
 // load a local config file that overwrites some of the config
 function load_config_local() {
     try {
-        // looking up config-local module using process.cwd() to allow pkg to find it
-        // outside the binary package - see https://github.com/vercel/pkg#snapshot-filesystem
-        // @ts-ignore
-        // eslint-disable-next-line global-require
-        const local_config = require(path.join(process.cwd(), 'config-local'));
+        const local_config = require_from_file('config-local');
         if (!local_config) return;
         console.warn('load_config_local: LOADED', local_config);
         if (typeof local_config === 'function') {
@@ -1031,7 +1029,7 @@ function _get_data_from_file(file_name) {
     try {
         data = fs.readFileSync(file_name).toString();
     } catch (e) {
-        console.warn(`Error accrued while getting the data from ${file_name}: ${e}`);
+        // console.warn(`Error accrued while getting the data from ${file_name}: ${e}`);
         return;
     }
     return data;
@@ -1044,10 +1042,10 @@ function _get_config_root() {
     let config_root = config.NSFS_NC_DEFAULT_CONF_DIR;
     try {
         const redirect_path = path.join(config.NSFS_NC_DEFAULT_CONF_DIR, config.NSFS_NC_CONF_DIR_REDIRECT_FILE);
-        const data = _get_data_from_file(redirect_path);
+        const data = fs.readFileSync(redirect_path);
         config_root = data.toString().trim();
     } catch (err) {
-        console.warn('config.get_config_root - could not find custom config_root, will use the default config_root ', config_root);
+        // console.warn('config.get_config_root - could not find custom config_root, will use the default config_root ', config_root);
     }
     return config_root;
 }
@@ -1092,7 +1090,7 @@ function load_nsfs_nc_config() {
             console.warn('load_nsfs_nc_config.setting config.NSFS_NC_CONF_DIR', config.NSFS_NC_CONF_DIR);
         }
         const config_path = path.join(config.NSFS_NC_CONF_DIR, 'config.json');
-        const config_data = require(config_path);
+        const config_data = require_from_file(config_path);
         nsfs_schema_utils.validate_nsfs_config_schema(config_data);
 
         const shared_config = _.omit(config_data, 'host_customization');
@@ -1128,7 +1126,7 @@ function reload_nsfs_nc_config() {
         fs.watchFile(config_path, {
             interval: config.NC_RELOAD_CONFIG_INTERVAL
         }, () => {
-            delete require.cache[config_path];
+            delete require_from_file.cache[config_path];
             try {
                 load_nsfs_nc_config();
             } catch (err) {

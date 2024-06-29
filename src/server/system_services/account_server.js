@@ -6,7 +6,7 @@ const _ = require('lodash');
 const net = require('net');
 const chance = require('chance')();
 const GoogleStorage = require('../../util/google_storage_wrap');
-const bcrypt = require('bcrypt');
+const bcrypt = require('../../util/node_sea').isSea() ? null : require('bcrypt');
 const server_rpc = require('../server_rpc');
 
 const config = require('../../../config');

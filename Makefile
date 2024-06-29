@@ -7,6 +7,13 @@ POSTGRES_IMAGE?="centos/postgresql-12-centos7"
 MONGO_IMAGE?="centos/mongodb-36-centos7"
 CENTOS_VER?=9
 
+NODE_BIN=$(shell command -v node)
+BUILD_DIR?="build/Release"
+NOOBAA_CORE_MAIN=src/cmd/index.js
+NOOBAA_CORE_BUNDLE="$(BUILD_DIR)/noobaa-core.js"
+NOOBAA_CORE_BLOB="$(BUILD_DIR)/noobaa-core.blob"
+NOOBAA_CORE_BIN="$(BUILD_DIR)/noobaa-core"
+
 CONTAINER_ENGINE?=$(shell docker version >/dev/null 2>&1 && echo docker)
 ifeq ($(CONTAINER_ENGINE),)
 	CONTAINER_ENGINE=$(shell podman version >/dev/null 2>&1 && echo podman)
@@ -105,6 +112,42 @@ clean_build:
 rebuild: clean_build build
 .PHONY: rebuild
 
+
+#####################
+# SINGLE EXECUTABLE #
+#####################
+
+sea: $(NOOBAA_CORE_BIN)
+	$(NOOBAA_CORE_BIN) --help
+	@echo "\n✅ made sea\n"
+.PHONY: sea
+
+$(NOOBAA_CORE_BUNDLE): build $(NOOBAA_CORE_MAIN)
+	npx esbuild $(NOOBAA_CORE_MAIN) \
+		--bundle \
+		--platform=node \
+		--external:heapdump \
+		--external:mongodb-extjson \
+		--external:@mapbox/node-pre-gyp \
+		--outfile=$(NOOBAA_CORE_BUNDLE)
+	@echo "\n✅ made $(NOOBAA_CORE_BUNDLE)\n"
+
+$(NOOBAA_CORE_BLOB): sea-config.json $(NOOBAA_CORE_BUNDLE)
+	node --experimental-sea-config sea-config.json
+	@echo "\n✅ made $(NOOBAA_CORE_BLOB)\n"
+
+$(NOOBAA_CORE_BIN): build $(NODE_BIN) $(NOOBAA_CORE_BLOB)
+	cp -f $(NODE_BIN) $(NOOBAA_CORE_BIN)
+	codesign --remove-signature $(NOOBAA_CORE_BIN)
+	npx postject $(NOOBAA_CORE_BIN) NODE_SEA_BLOB $(NOOBAA_CORE_BLOB) \
+		--overwrite \
+		--macho-segment-name NODE_SEA \
+		--sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+	codesign --sign - $(NOOBAA_CORE_BIN)
+	@echo "\n✅ made $(NOOBAA_CORE_BIN)\n"
+
+
+# pkg is to be removed, it is being replaced by node-sea ^
 pkg: build
 	npm run pkg
 .PHONY: pkg

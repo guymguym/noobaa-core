@@ -2,7 +2,7 @@
 'use strict';
 
 const _ = require('lodash');
-const bcrypt = require('bcrypt');
+const bcrypt = require('../../util/node_sea').isSea() ? null : require('bcrypt');
 const ip_module = require('ip');
 
 const P = require('../../util/promise');
