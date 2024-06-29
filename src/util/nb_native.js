@@ -6,7 +6,7 @@ const fs = require('fs');
 const util = require('util');
 const events = require('events');
 const chance = require('chance')();
-const bindings = require('bindings');
+const { bindings } = require('./node_sea');
 const child_process = require('child_process');
 const config = require('../../config');
 
@@ -39,7 +39,7 @@ function nb_native() {
 
 // extend prototype
 function inherits(target, source) {
-    _.forIn(source.prototype, function(v, k) {
+    _.forIn(source.prototype, (v, k) => {
         target.prototype[k] = source.prototype[k];
     });
 }

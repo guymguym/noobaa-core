@@ -109,6 +109,19 @@ pkg: build
 	npm run pkg
 .PHONY: pkg
 
+sea: build
+	npm run build:sea:bundle
+	npm run build:sea:blob
+	cp -f $(shell command -v node) build/noobaa-sea
+	codesign --remove-signature build/noobaa-sea
+	npx postject build/noobaa-sea NODE_SEA_BLOB build/sea.blob \
+		--sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 \
+		--macho-segment-name NODE_SEA
+	codesign --sign - build/noobaa-sea
+	( cd build; ln -s ./Release/nb_native.node ./nb_native.node; ln -s ./Release/nb_native_nan.node ./nb_native_nan.node )
+	build/noobaa-sea --help
+.PHONY: sea
+
 
 ################
 # BUILD IMAGES #

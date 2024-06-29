@@ -1,0 +1,5 @@
+{
+  "main": "build/sea.js",
+  "output": "build/sea.blob",
+  "disableExperimentalSEAWarning": true
+}
