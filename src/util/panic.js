@@ -2,6 +2,7 @@
 'use strict';
 
 const child_process = require('child_process');
+const node_sea = require('./node_sea');
 
 // catch process uncaught exceptions, and treat as a panic and exit after logging
 // since restarting the process is the most stable way of recovery
@@ -21,7 +22,7 @@ function panic(message, err) {
 }
 
 // dump heap with kill -USR2 <pid>
-const heapdump = require('heapdump');
+const heapdump = node_sea.isSea() ? null : require('heapdump');
 
 const memory_monitor_config = {
     logging_threshold: (1024 + 512) * 1024 * 1024,
@@ -57,7 +58,7 @@ function memory_monitor() {
             const size_mb = (current / 1024 / 1024).toFixed(0);
             const snapshot_name = `heapdump-${h.name}-${process.pid}-${new Date().toISOString()}-${size_mb}MB.heapsnapshot`;
             console.log(`memory_monitor: writing ${snapshot_name}`);
-            heapdump.writeSnapshot(snapshot_name);
+            heapdump?.writeSnapshot(snapshot_name);
             const increase = current - h.next;
             const align = h.step - (increase % h.step);
             h.next += increase + align;

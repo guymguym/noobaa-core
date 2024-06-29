@@ -5,7 +5,7 @@ const _ = require('lodash');
 const fs = require('fs');
 const util = require('util');
 const events = require('events');
-const bindings = require('bindings');
+const { bindings } = require('./node_sea');
 const config = require('../../config');
 const entropy_utils = require('./entropy_utils');
 
@@ -37,7 +37,7 @@ function nb_native() {
 
 // extend prototype
 function inherits(target, source) {
-    _.forIn(source.prototype, function(v, k) {
+    _.forIn(source.prototype, (v, k) => {
         target.prototype[k] = source.prototype[k];
     });
 }

@@ -1,0 +1,8 @@
+{
+  "main": "build/Release/noobaa-core.js",
+  "output": "build/Release/noobaa-core.blob",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": false,
+  "assets": {}
+}
