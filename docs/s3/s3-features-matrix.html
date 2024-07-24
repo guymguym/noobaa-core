@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>NooBaa S3 Compatibility</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src$=\#gh-light-mode-only],
+.vscode-high-contrast-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <h1 id="noobaa-s3-compatibility">NooBaa S3 Compatibility</h1>
+<h2 id="protocol-features">Protocol Features</h2>
+<p>Supported Protocol Features:</p>
+<ul>
+<li><a href="https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html">Authentication</a> - Sigv4, Sigv2, Presigned URL.</li>
+<li>Authorization - Bucket Policy.</li>
+<li>Bucket addressing - Path-style (&quot;<a href="http://domain.io/bucket">domain.io/bucket</a>&quot;), Host-style (&quot;<a href="http://bucket.domain.com">bucket.domain.com</a>&quot;).</li>
+<li><a href="https://docs.aws.amazon.com/AmazonS3/latest/API/RESTCommonRequestHeaders.html">Common Request Headers</a> - Authorization, Content-Length, Content-Type, Content-MD5, Date, Expect, Host, x-amz-content-sha256, x-amz-date, x-amz-security-token.</li>
+<li><a href="https://docs.aws.amazon.com/AmazonS3/latest/API/RESTCommonResponseHeaders.html">Common Response Headers</a> - Content-Length, Content-Type, Connection, Date, ETag, <s>Server</s>.</li>
+</ul>
+<p>Unsupported Protocol Features:</p>
+<ul>
+<li>Bucket or Object ACL (x-amz-acl and x-amz-grant headers) - use Bucket Policy instead.</li>
+</ul>
+<h2 id="bucket-operations">Bucket Operations</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align:center"></th>
+<th style="text-align:left">S3 operation</th>
+<th style="text-align:center">BackingStores <br> (all types)</th>
+<th style="text-align:center">NamespaceFS <br> (NS-FS)</th>
+<th style="text-align:left">Gaps</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:center"><strong>Basic</strong></td>
+<td style="text-align:left"></td>
+<td style="text-align:center"></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">HeadBucket</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">GetBucketLocation</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">CreateBucket</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">DeleteBucket</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">ListBuckets</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"><strong>Policy</strong></td>
+<td style="text-align:left"></td>
+<td style="text-align:center"></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">GetBucketPolicy</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"><a href="https://github.com/noobaa/noobaa-core/pull/7997">#7997</a></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">GetBucketPolicyStatus</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">PutBucketPolicy</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">DeleteBucketPolicy</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"><strong>Tagging</strong></td>
+<td style="text-align:left"></td>
+<td style="text-align:center"></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">GetBucketTagging</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"><a href="https://github.com/noobaa/noobaa-core/issues/8047">#8047</a></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">PutBucketTagging</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">DeleteBucketTagging</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"><strong>Versioning</strong></td>
+<td style="text-align:left"></td>
+<td style="text-align:center"></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">GetBucketVersioning</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">PutBucketVersioning</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"><strong>Website</strong></td>
+<td style="text-align:left"></td>
+<td style="text-align:center"></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">GetBucketWebsite</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">PutBucketWebsite</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">DeleteBucketWebsite</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"><strong>Encryption</strong></td>
+<td style="text-align:left"></td>
+<td style="text-align:center"></td>
+<td style="text-align:center"></td>
+<td style="text-align:left">AES256</td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">GetBucketEncryption</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">PutBucketEncryption</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">DeleteBucketEncryption</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"><strong>Lifecycle</strong></td>
+<td style="text-align:left"></td>
+<td style="text-align:center"></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">GetBucketLifecycle</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">PutBucketLifecycle</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">DeleteBucketLifecycle</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">GetBucketLifecycleConfiguration</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">PutBucketLifecycleConfiguration</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"><strong>Logging</strong></td>
+<td style="text-align:left"></td>
+<td style="text-align:center"></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">GetBucketLogging</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td style="text-align:center"></td>
+<td style="text-align:left">PutBucketLogging</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+</tbody>
+</table>
+<p>Unsupported Bucket Operations:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>S3 operation</th>
+<th style="text-align:center">Roadmap</th>
+<th style="text-align:left">Issue/PR</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Replication</strong></td>
+<td></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td></td>
+<td>GetBucketReplication</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td></td>
+<td>PutBucketReplication</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td></td>
+<td>DeleteBucketReplication</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td><strong>Notification</strong></td>
+<td></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td></td>
+<td>GetBucketNotification</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td></td>
+<td>PutBucketNotification</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td></td>
+<td>GetBucketNotificationConfiguration</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td></td>
+<td>PutBucketNotificationConfiguration</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td><strong>CORS</strong></td>
+<td></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"><a href="https://github.com/noobaa/noobaa-core/issues/6080">#6080</a></td>
+</tr>
+<tr>
+<td></td>
+<td>GetBucketCors</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td></td>
+<td>PutBucketCors</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td></td>
+<td>DeleteBucketCors</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td><strong>DirectoryBuckets</strong></td>
+<td></td>
+<td style="text-align:center"></td>
+<td style="text-align:left"></td>
+</tr>
+<tr>
+<td></td>
+<td>ListDirectoryBuckets</td>
+<td style="text-align:center">🇽</td>
+<td style="text-align:left"></td>
+</tr>
+</tbody>
+</table>
+<p>GetBucketAccelerateConfiguration
+PutBucketAccelerateConfiguration</p>
+<p>GetBucketAnalyticsConfiguration
+PutBucketAnalyticsConfiguration
+DeleteBucketAnalyticsConfiguration
+ListBucketAnalyticsConfigurations</p>
+<p>GetBucketIntelligentTieringConfiguration
+PutBucketIntelligentTieringConfiguration
+DeleteBucketIntelligentTieringConfiguration
+ListBucketIntelligentTieringConfigurations</p>
+<p>GetBucketInventoryConfiguration
+PutBucketInventoryConfiguration
+DeleteBucketInventoryConfiguration
+ListBucketInventoryConfigurations</p>
+<p>GetBucketMetricsConfiguration
+PutBucketMetricsConfiguration
+DeleteBucketMetricsConfiguration
+ListBucketMetricsConfigurations</p>
+<p>GetBucketOwnershipControls
+PutBucketOwnershipControls
+DeleteBucketOwnershipControls</p>
+<p>GetBucketRequestPayment
+PutBucketRequestPayment</p>
+<p>GetPublicAccessBlock
+PutPublicAccessBlock
+DeletePublicAccessBlock</p>
+<ul>
+<li>ACL - Deprecated
+GetBucketAcl
+PutBucketAcl</li>
+</ul>
+<hr>
+<h2 id="supported-object-operations">Supported Object Operations</h2>
+<p>HeadObject
+GetObject
+GetObjectAttributes
+PutObject
+CopyObject
+DeleteObject
+DeleteObjects</p>
+<p>ListObjects
+ListObjectsV2
+ListObjectVersions</p>
+<p>ListMultipartUploads
+CreateMultipartUpload
+CompleteMultipartUpload
+AbortMultipartUpload</p>
+<p>ListParts
+UploadPart
+UploadPartCopy</p>
+<p>GetObjectTagging
+PutObjectTagging
+DeleteObjectTagging</p>
+<p>RestoreObject</p>
+<p>SelectObjectContent</p>
+<h2 id="unsupported-object-operations">Unsupported Object Operations</h2>
+<p>GetObjectAcl
+PutObjectAcl</p>
+<p>GetObjectLegalHold
+PutObjectLegalHold</p>
+<p>GetObjectLockConfiguration
+PutObjectLockConfiguration</p>
+<p>GetObjectRetention
+PutObjectRetention</p>
+<p>GetObjectTorrent</p>
+<p>WriteGetObjectResponse</p>
+<p>CreateSession</p>
+
+            
+            
+        </body>
+        </html>
