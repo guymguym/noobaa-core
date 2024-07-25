@@ -84,6 +84,7 @@ if (!size_units_table[argv.block_size_units]) {
     throw new Error('Invalid block_size_units ' + argv.block_size_units);
 }
 
+let end_time; // set in workers_func
 const block_size = argv.block_size * size_units_table[argv.block_size_units];
 const file_size = argv.file_size * size_units_table[argv.file_size_units];
 const size_name = String(argv.file_size) + String(argv.file_size_units);
@@ -159,7 +160,7 @@ async function io_worker(worker_id, io_worker_id) {
     const worker_buf = Buffer.allocUnsafeSlow(block_size);
 
     const start_time = Date.now();
-    const end_time = start_time + (argv.time * 1000);
+    end_time = start_time + (argv.time * 1000);
 
     for (; ;) {
         const now = Date.now();
@@ -208,6 +209,7 @@ async function work_with_nsfs(file_path, buf) {
         }
     }
     for (let pos = 0; pos < file_size_aligned; pos += buf.length) {
+        if (Date.now() >= end_time) break;
         if (argv.write) {
             await (argv.nvec > 1 ?
                 file.writev(fs_context, split_to_nvec(buf, argv.nvec)) :
@@ -227,6 +229,7 @@ async function work_with_nsfs(file_path, buf) {
 async function work_with_nodejs(file_path, buf) {
     const file = await fs.promises.open(file_path, argv.write ? 'w' : 'r', 0o660);
     for (let pos = 0; pos < file_size_aligned; pos += buf.length) {
+        if (Date.now() >= end_time) break;
         if (argv.write) {
             await (argv.nvec > 1 ?
                 file.writev(split_to_nvec(buf, argv.nvec)) :
