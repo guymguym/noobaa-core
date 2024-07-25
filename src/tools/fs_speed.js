@@ -1,6 +1,8 @@
 /* Copyright (C) 2016 NooBaa */
 'use strict';
 
+require('../util/panic');
+
 const fs = require('fs');
 const util = require('util');
 const path = require('path');
@@ -101,6 +103,7 @@ if (argv.forks > 1 && is_master) {
 }
 
 async function main() {
+    // nb_native().fs.set_debug_level(5);
     const promises = [];
     fs.mkdirSync(argv.dir, { recursive: true });
     for (let i = 0; i < argv.concur; ++i) promises.push(worker(i));
@@ -157,10 +160,10 @@ async function work_with_nsfs(file_path) {
     const fs_context = {
         // uid: 666,
         // gid: 666,
-        backend: 'GPFS',
+        backend: argv.backend,
         warn_threshold_ms: 1000,
     };
-    const file = await nb_native().fs.open(fs_context, file_path, argv.read ? 'r' : 'w', 0x660);
+    const file = await nb_native().fs.open(fs_context, file_path, argv.read ? 'r' : 'w', 0o660);
     for (let pos = 0; pos < file_size_aligned; pos += block_size) {
         const buf_start_time = Date.now();
         if (buf_start_time >= end_time) break;
@@ -187,7 +190,7 @@ async function work_with_nodejs(file_path) {
         highWaterMark: 2 * block_size,
         generator: argv.read ? 'noinit' : argv.generator,
     });
-    const file = await fs.promises.open(file_path, argv.read ? 'r' : 'w', 0x660);
+    const file = await fs.promises.open(file_path, argv.read ? 'r' : 'w', 0o660);
     for (let pos = 0; pos < file_size_aligned; pos += block_size) {
         const buf_start_time = Date.now();
         if (buf_start_time >= end_time) break;
