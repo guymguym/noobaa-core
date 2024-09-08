@@ -48,6 +48,14 @@ const cluster = /** @type {import('node:cluster').Cluster} */ (
     /** @type {unknown} */ (require('node:cluster'))
 );
 
+const path = require('path');
+const express = require('express');
+const webapp = express();
+const rootdir = path.join(__dirname, '..', '..');
+webapp.use('/_/', express.static(path.join(rootdir, 'build', 'webapp')));
+webapp.use('/', express.static(path.join(rootdir, 'src', 'webapp')));
+// webapp.use('/', express.static(path.join(rootdir, 'build', 'webapp')));
+
 if (process.env.NOOBAA_LOG_LEVEL) {
     const dbg_conf = debug_config.get_debug_config(process.env.NOOBAA_LOG_LEVEL);
     dbg_conf.endpoint.map(module => dbg.set_module_level(dbg_conf.level, module));
@@ -60,6 +68,7 @@ dbg.log0('endpoint: replacing old umask: ', old_umask.toString(8), 'with new uma
 
 /**
  * @typedef {http.IncomingMessage & {
+ *  body?: string | { [s: string]: string };
  *  object_sdk?: ObjectSDK;
  *  func_sdk?: FuncSDK;
  *  sts_sdk?: StsSDK;
@@ -90,7 +99,7 @@ dbg.log0('endpoint: replacing old umask: ', old_umask.toString(8), 'with new uma
 
 // An internal function to prevent code duplication
 async function create_https_server(ssl_cert_info, honorCipherOrder, endpoint_handler) {
-    const ssl_options = {...ssl_cert_info.cert, honorCipherOrder: honorCipherOrder};
+    const ssl_options = { ...ssl_cert_info.cert, honorCipherOrder: honorCipherOrder };
     return https.createServer(ssl_options, endpoint_handler);
 }
 
@@ -119,9 +128,9 @@ async function main(options = {}) {
 
         const virtual_hosts = Object.freeze(
             config.VIRTUAL_HOSTS
-            .split(' ')
-            .filter(suffix => net_utils.is_fqdn(suffix))
-            .sort()
+                .split(' ')
+                .filter(suffix => net_utils.is_fqdn(suffix))
+                .sort()
         );
         const location_info = Object.freeze({
             region: process.env.REGION || '',
@@ -278,6 +287,11 @@ function create_endpoint_handler(init_request_sdk, virtual_hosts, sts, logger) {
             return lambda_rest_handler(req, res);
         } else if (req.headers['x-ms-version']) {
             return blob_rest_handler(req, res);
+        } else if (
+            req.url.startsWith('/_/') ||
+            (req.url === '/' && req.headers.accept?.includes('text/html')) ||
+            req.headers['hx-request'] === 'true') {
+            return webapp(req, res);
         } else if (req.url.startsWith('/total_fork_count')) {
             return fork_count_handler(req, res);
         } else if (req.url.startsWith('/endpoint_fork_id')) {
@@ -400,7 +414,7 @@ async function start_monitor(internal_rpc_client, endpoint_group_id) {
     let base_cpu_time = process.cpuUsage();
 
     dbg.log0('Endpoint monitor started');
-    for (;;) {
+    for (; ;) {
         try {
             await P.delay_unblocking(config.ENDPOINT_MONITOR_INTERVAL);
             const end_time = process.hrtime.bigint() / 1000n;

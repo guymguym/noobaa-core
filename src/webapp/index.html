@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>NooBaa Explorer</title>
+</head>
+
+<body>
+    <h1>NooBaa Explorer</h1>
+    <form id="form_form" onsubmit="return form_submit(event)">
+        <p>
+            <label>
+                Access Key:
+                <input id="form_access_key" name="access_key" type="text" />
+            </label>
+        </p>
+        <p>
+            <label>
+                Secret Key:
+                <input id="form_secret_key" name="secret_key" type="password" />
+            </label>
+        </p>
+        <p>
+            <label>
+                Bucket:
+                <input id="form_bucket" name="bucket" type="text" />
+            </label>
+        </p>
+        <p>
+            <label>
+                Prefix:
+                <input id="form_prefix" name="prefix" type="text" />
+            </label>
+        </p>
+        <p>
+            <input name="submit" type="submit" />
+        </p>
+    </form>
+    <hr />
+    <div id="output"></div>
+
+    <script src="/_/bundle.js"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.1"
+        integrity="sha384-QWGpdj554B4ETpJJC9z+ZHJcA/i59TyjxEPXiiUgN2WmTyV5OEZWCD6gQhgkdpB/"
+        crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
+</body>
+
+</html>
