@@ -52,6 +52,14 @@ const cluster = /** @type {import('node:cluster').Cluster} */ (
     (require('node:cluster'))
 );
 
+const path = require('path');
+const express = require('express');
+const webapp = express();
+const rootdir = path.join(__dirname, '..', '..');
+webapp.use('/_/', express.static(path.join(rootdir, 'build', 'webapp')));
+webapp.use('/', express.static(path.join(rootdir, 'src', 'webapp')));
+// webapp.use('/', express.static(path.join(rootdir, 'build', 'webapp')));
+
 if (process.env.NOOBAA_LOG_LEVEL) {
     const dbg_conf = debug_config.get_debug_config(process.env.NOOBAA_LOG_LEVEL);
     dbg_conf.endpoint.map(module => dbg.set_module_level(dbg_conf.level, module));
@@ -140,9 +148,9 @@ async function main(options = {}) {
 
         const virtual_hosts = Object.freeze(
             config.VIRTUAL_HOSTS
-            .split(' ')
-            .filter(suffix => net_utils.is_fqdn(suffix))
-            .sort()
+                .split(' ')
+                .filter(suffix => net_utils.is_fqdn(suffix))
+                .sort()
         );
         const location_info = Object.freeze({
             region: process.env.REGION || '',
@@ -328,6 +336,8 @@ function create_endpoint_handler(server_type, init_request_sdk, { virtual_hosts,
                 } else {
                     return internal_api_error(req, res, `Unknown API call ${api}`);
                 }
+            } else if (req.url === '/' && req.headers.accept?.includes('text/html')) {
+                return webapp(req, res);
             } else {
                 return s3_rest.handler(req, res);
             }
