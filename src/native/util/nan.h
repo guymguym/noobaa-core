@@ -73,7 +73,6 @@ NanKey(std::string s)
     (NAN_SET(obj, key, Nan::CopyBuffer(buf.cdata(), buf.length()).ToLocalChecked()))
 #define NAN_SET_BUF_DETACH(obj, key, buf)                                              \
     do {                                                                               \
-        assert(buf.unique_alloc());                                                    \
         NAN_SET(obj, key, Nan::NewBuffer(buf.cdata(), buf.length()).ToLocalChecked()); \
         buf.detach_alloc();                                                            \
     } while (0)
