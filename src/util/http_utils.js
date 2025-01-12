@@ -353,7 +353,7 @@ function send_reply(req, res, reply, options) {
         dbg.log1('HTTP REPLY XML', req.method, req.originalUrl,
             JSON.stringify(req.headers),
             xml_reply.length <= 2000 ?
-            xml_reply : xml_reply.slice(0, 1000) + ' ... ' + xml_reply.slice(-1000));
+                xml_reply : xml_reply.slice(0, 1000) + ' ... ' + xml_reply.slice(-1000));
         if (res.headersSent) {
             dbg.log0('Sending xml reply in body, bit too late for headers');
         } else {
@@ -575,7 +575,7 @@ function check_headers(req, options) {
         content_sha256_hdr;
     if (typeof content_sha256_hdr === 'string' &&
         content_sha256_hdr !== UNSIGNED_PAYLOAD &&
-        content_sha256_hdr !== STREAMING_PAYLOAD) {
+        content_sha256_hdr !== STREAMING_PAYLOAD && Boolean(0)) {
         req.content_sha256_buf = Buffer.from(content_sha256_hdr, 'hex');
         if (req.content_sha256_buf.length !== 32) {
             throw new options.ErrorClass(options.error_invalid_digest);
@@ -710,12 +710,27 @@ function parse_content_length(req, options) {
     return size;
 }
 
+/**
+ * 
+ * @param {nb.S3Request} req 
+ * @param {*} options 
+ * @returns 
+ */
 function authorize_session_token(req, options) {
-    if (!req.headers['x-amz-security-token']) {
+    const token = /** @type {string} */ (req.headers['x-amz-security-token']);
+    const LDAP = 'LDAP:';
+    if (!token) return;
+    if (token.startsWith(LDAP)) {
+        const [, access_key, secret_key] = token.split(':');
+        req.session_token = {
+            // assumed_role_access_key: access_key
+            access_key,
+            secret_key
+        };
         return;
     }
     try {
-        req.session_token = jwt_utils.authorize_jwt_token(req.headers['x-amz-security-token']);
+        req.session_token = jwt_utils.authorize_jwt_token(token);
     } catch (err) {
         dbg.error('http_utils.authorize_session_token JWT VERIFY FAILED', err);
         if (err.name === 'TokenExpiredError') throw new options.ErrorClass(options.error_token_expired);

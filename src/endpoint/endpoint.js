@@ -70,6 +70,7 @@ dbg.log0('endpoint: replacing old umask: ', old_umask.toString(8), 'with new uma
  *  object_sdk?: ObjectSDK;
  *  func_sdk?: FuncSDK;
  *  sts_sdk?: StsSDK;
+ *  account_sdk?: nb.AccountSDK;
  *  virtual_hosts?: readonly string[];
  *  bucket_logger?: PersistentLogger;
  *  notification_logger?: PersistentLogger;

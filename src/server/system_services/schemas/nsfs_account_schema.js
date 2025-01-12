@@ -74,6 +74,7 @@ module.exports = {
                 }
             }
         },
+        role_config: { $ref: 'common_api#/definitions/role_config' },
         nsfs_account_config: {
             oneOf: [{
                 type: 'object',

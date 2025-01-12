@@ -134,7 +134,7 @@ async function authorize_request_policy(req) {
     const method = _get_method_from_req(req);
     const cur_account_email = req.sts_sdk.requesting_account && req.sts_sdk.requesting_account.email.unwrap();
     // system owner by design can always assume role policy of any account
-    if ((cur_account_email === _get_system_owner().unwrap()) && req.op_name.endsWith('assume_role')) return;
+    // if ((cur_account_email === _get_system_owner().unwrap()) && req.op_name.endsWith('assume_role')) return;
 
     const permission = has_assume_role_permission(assume_role_policy, method, cur_account_email);
     dbg.log0('sts_rest.authorize_request_policy permission is: ', permission);
