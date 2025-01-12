@@ -773,11 +773,12 @@ class BucketSpaceFS extends BucketSpaceSimpleFS {
     /////////////////////////
 
     async get_object_lock_configuration(params, object_sdk) {
-        // TODO
+        // return null; // TODO
+        throw new S3Error(S3Error.ObjectLockConfigurationNotFoundError);
     }
 
     async put_object_lock_configuration(params, object_sdk) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     /////////////////

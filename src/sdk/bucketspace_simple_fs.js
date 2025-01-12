@@ -14,7 +14,7 @@ const native_fs_utils = require('../util/native_fs_utils');
  */
 class BucketSpaceSimpleFS {
 
-    constructor({fs_root}) {
+    constructor({ fs_root }) {
         this.fs_root = fs_root;
         this.fs_context = {
             uid: process.getuid(),
@@ -145,15 +145,15 @@ class BucketSpaceSimpleFS {
     //////////////////////
 
     async get_bucket_lifecycle_configuration_rules(params) {
-        // TODO
+        return {}; // TODO
     }
 
     async set_bucket_lifecycle_configuration_rules(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     async delete_bucket_lifecycle(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     ///////////////////////
@@ -161,7 +161,7 @@ class BucketSpaceSimpleFS {
     ///////////////////////
 
     async set_bucket_versioning(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     ////////////////////
@@ -169,15 +169,15 @@ class BucketSpaceSimpleFS {
     ////////////////////
 
     async put_bucket_tagging(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     async delete_bucket_tagging(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     async get_bucket_tagging(params) {
-        // TODO
+        return { tagging: [] }; // TODO
     }
 
     ///////////////////////
@@ -185,15 +185,15 @@ class BucketSpaceSimpleFS {
     ///////////////////////
 
     async put_bucket_encryption(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     async get_bucket_encryption(params) {
-        // TODO
+        return { encryption: null }; // TODO
     }
 
     async delete_bucket_encryption(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     ////////////////////
@@ -201,11 +201,11 @@ class BucketSpaceSimpleFS {
     ////////////////////
 
     async put_bucket_website(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     async delete_bucket_website(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     /**
@@ -213,7 +213,7 @@ class BucketSpaceSimpleFS {
     * @returns {Promise<object>}
     */
     async get_bucket_website(params) {
-        // TODO
+        return { website: null }; // TODO
     }
 
     ////////////////////
@@ -221,17 +221,15 @@ class BucketSpaceSimpleFS {
     ////////////////////
 
     async put_bucket_policy(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     async delete_bucket_policy(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     async get_bucket_policy(params) {
-        return {
-            policy: undefined
-        };
+        return { policy: null }; // TODO
     }
 
     /////////////////////////
@@ -239,11 +237,11 @@ class BucketSpaceSimpleFS {
     /////////////////////////
 
     async get_object_lock_configuration(params, object_sdk) {
-        // TODO
+        return null; // TODO
     }
 
     async put_object_lock_configuration(params, object_sdk) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
 
@@ -252,15 +250,15 @@ class BucketSpaceSimpleFS {
     /////////////////////
 
     async put_bucket_logging(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     async delete_bucket_logging(params) {
-        // TODO
+        throw new S3Error(S3Error.NotImplemented);
     }
 
     async get_bucket_logging(params) {
-        // TODO
+        return null; // TODO
     }
 }
 
