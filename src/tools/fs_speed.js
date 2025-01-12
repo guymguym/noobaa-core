@@ -127,15 +127,23 @@ async function worker(id) {
         if (file_start_time >= end_time) break;
         const file_path = path.join(dir, `file-${file_id}`);
         file_id += 1;
-        if (argv.mode === 'nsfs') {
-            await work_with_nsfs(file_path);
-        } else if (argv.mode === 'nodejs') {
-            await work_with_nodejs(file_path);
-        } else if (argv.mode === 'dd') {
-            await work_with_dd(file_path);
+        try {
+            if (argv.mode === 'nsfs') {
+                await work_with_nsfs(file_path);
+            } else if (argv.mode === 'nodejs') {
+                await work_with_nodejs(file_path);
+            } else if (argv.mode === 'dd') {
+                await work_with_dd(file_path);
+            }
+            const took_ms = Date.now() - file_start_time;
+            speedometer.add_op(took_ms);
+        } catch (err) {
+            if (argv.read && err.code === 'ENOENT') {
+                file_id = 0;
+            } else {
+                throw err;
+            }
         }
-        const took_ms = Date.now() - file_start_time;
-        speedometer.add_op(took_ms);
     }
 }
 
