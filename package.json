@@ -127,6 +127,9 @@
     "yauzl": "3.2.0",
     "yazl": "3.3.1"
   },
+  "optionalDependencies": {
+    "node-rdkafka": "3.4.0"
+  },
   "devDependencies": {
     "@aws-sdk/client-iam": "3.936.0",
     "@stylistic/eslint-plugin-js": "1.8.1",
