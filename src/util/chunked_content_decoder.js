@@ -45,23 +45,25 @@ class ChunkedContentDecoder extends stream.Transform {
         return callback();
     }
 
+    /**
+     * @param {Buffer} buf 
+     */
     parse(buf) {
         for (let index = 0; index < buf.length; ++index) {
             if (this.state === STATE_READ_CHUNK_HEADER) {
-                for (; index < buf.length; ++index) {
-                    if (buf[index] === CR_CODE) {
-                        const header_items = this.chunk_header_str.split(';');
-                        this.chunk_size = parseInt(header_items[0], 16);
-                        if (!(this.chunk_size >= 0)) return this.error_state();
-                        this.last_chunk = this.chunk_size === 0;
-                        const header1 = header_items[1].split('=');
-                        this.chunk_signature = header1[0] === 'chunk-signature' ? header1[1] : '';
-                        this.chunk_header_str = '';
-                        this.state = STATE_WAIT_NL_HEADER;
-                        break;
-                    } else {
-                        this.chunk_header_str += String.fromCharCode(buf[index]);
-                    }
+                const cr_index = buf.indexOf(CR_CODE, index);
+                const end_index = cr_index >= 0 ? cr_index : buf.length;
+                this.chunk_header_str += buf.toString('utf8', index, end_index);
+                index = end_index;
+                if (cr_index >= 0) {
+                    const header_items = this.chunk_header_str.split(';');
+                    this.chunk_size = parseInt(header_items[0], 16);
+                    if (!(this.chunk_size >= 0)) return this.error_state();
+                    this.last_chunk = this.chunk_size === 0;
+                    const header1 = header_items[1]?.split('=');
+                    this.chunk_signature = header1[0] === 'chunk-signature' ? header1[1] : '';
+                    this.chunk_header_str = '';
+                    this.state = STATE_WAIT_NL_HEADER;
                 }
             } else if (this.state === STATE_WAIT_NL_HEADER) {
                 if (buf[index] !== NL_CODE) return this.error_state();
