@@ -14,6 +14,7 @@ const dbg = require('../util/debug_module')(__filename);
 const config = require('../../config');
 const crypto = require('crypto');
 const s3_utils = require('../endpoint/s3/s3_utils');
+const http_utils = require('../util/http_utils');
 const error_utils = require('../util/error_utils');
 const stream_utils = require('../util/stream_utils');
 const buffer_utils = require('../util/buffer_utils');
@@ -101,7 +102,7 @@ function sort_entries_by_name(a, b) {
     return 0;
 }
 
-function _get_version_id_by_stat({ino, mtimeNsBigint}) {
+function _get_version_id_by_stat({ ino, mtimeNsBigint }) {
     // TODO: GPFS might require generation number to be added to version_id
     return 'mtime-' + mtimeNsBigint.toString(36) + '-ino-' + ino.toString(36);
 }
@@ -489,7 +490,14 @@ class NamespaceFS {
         this.versioning = (config.NSFS_VERSIONING_ENABLED && versioning) || VERSIONING_STATUS_ENUM.VER_DISABLED;
         this.stats = stats;
         this.force_md5_etag = force_md5_etag;
-        this.warmup_buffer = nb_native().fs.dio_buffer_alloc(4096);
+    }
+
+    static _global_warmup_buffer;
+
+    get warmup_buffer() {
+        NamespaceFS._global_warmup_buffer ||=
+            nb_native().fs.dio_buffer_alloc(4096);
+        return NamespaceFS._global_warmup_buffer;
     }
 
     /**
@@ -794,7 +802,7 @@ class NamespaceFS {
                         if (version_id_marker) start_marker = version_id_marker;
                         marker_index = _.findIndex(
                             sorted_entries,
-                            {name: start_marker}
+                            { name: start_marker }
                         ) + 1;
                     } else {
                         marker_index = _.sortedLastIndexBy(
@@ -839,7 +847,7 @@ class NamespaceFS {
                 try {
                     dbg.warn('NamespaceFS: open dir streaming', dir_path, 'size', cached_dir.stat.size);
                     dir_handle = await nb_native().fs.opendir(fs_context, dir_path); //, { bufferSize: 128 });
-                    for (;;) {
+                    for (; ;) {
                         const dir_entry = await dir_handle.read(fs_context);
                         if (!dir_entry) break;
                         await process_entry(dir_entry);
@@ -935,22 +943,22 @@ class NamespaceFS {
         let isDir;
         let retries = (this._is_versioning_enabled() || this._is_versioning_suspended()) ? config.NSFS_RENAME_RETRIES : 0;
         try {
-            for (;;) {
-            try {
-                file_path = await this._find_version_path(fs_context, params, true);
-                await this._check_path_in_bucket_boundaries(fs_context, file_path);
-                await this._load_bucket(params, fs_context);
-                        stat = await nb_native().fs.stat(fs_context, file_path);
-                        isDir = native_fs_utils.isDirectory(stat);
-                if (isDir) {
-                    if (!stat.xattr?.[XATTR_DIR_CONTENT] || !params.key.endsWith('/')) {
-                        throw error_utils.new_error_code('ENOENT', 'NoSuchKey');
-                } else if (stat.xattr?.[XATTR_DIR_CONTENT] !== '0') {
-                    // find dir object content file path  and return its stat + xattr of its parent directory
-                    const dir_content_path = await this._find_version_path(fs_context, params);
-                    const dir_content_path_stat = await nb_native().fs.stat(fs_context, dir_content_path);
-                    const xattr = stat.xattr;
-                    stat = { ...dir_content_path_stat, xattr };
+            for (; ;) {
+                try {
+                    file_path = await this._find_version_path(fs_context, params, true);
+                    await this._check_path_in_bucket_boundaries(fs_context, file_path);
+                    await this._load_bucket(params, fs_context);
+                    stat = await nb_native().fs.stat(fs_context, file_path);
+                    isDir = native_fs_utils.isDirectory(stat);
+                    if (isDir) {
+                        if (!stat.xattr?.[XATTR_DIR_CONTENT] || !params.key.endsWith('/')) {
+                            throw error_utils.new_error_code('ENOENT', 'NoSuchKey');
+                        } else if (stat.xattr?.[XATTR_DIR_CONTENT] !== '0') {
+                            // find dir object content file path  and return its stat + xattr of its parent directory
+                            const dir_content_path = await this._find_version_path(fs_context, params);
+                            const dir_content_path_stat = await nb_native().fs.stat(fs_context, dir_content_path);
+                            const xattr = stat.xattr;
+                            stat = { ...dir_content_path_stat, xattr };
                         }
                     }
                     if (this._is_mismatch_version_id(stat, params.version_id)) {
@@ -985,7 +993,7 @@ class NamespaceFS {
             } catch (err) {
                 //failed to get object
                 new NoobaaEvent(NoobaaEvent.OBJECT_GET_FAILED).create_event(params.key,
-                                        {bucket_path: this.bucket_path, object_name: params.key}, err);
+                    { bucket_path: this.bucket_path, object_name: params.key }, err);
                 dbg.log0('NamespaceFS: read_object_stream couldnt find dir content xattr', err);
             }
         }
@@ -1002,22 +1010,22 @@ class NamespaceFS {
             await this._load_bucket(params, fs_context);
             let retries = (this._is_versioning_enabled() || this._is_versioning_suspended()) ? config.NSFS_RENAME_RETRIES : 0;
             let stat;
-            for (;;) {
+            for (; ;) {
                 try {
-            file_path = await this._find_version_path(fs_context, params);
-            await this._check_path_in_bucket_boundaries(fs_context, file_path);
+                    file_path = await this._find_version_path(fs_context, params);
+                    await this._check_path_in_bucket_boundaries(fs_context, file_path);
 
-            // NOTE: don't move this code after the open
-            // this can lead to ENOENT failures due to file not exists when content size is 0
-            // if entry is a directory object and its content size = 0 - return empty response
+                    // NOTE: don't move this code after the open
+                    // this can lead to ENOENT failures due to file not exists when content size is 0
+                    // if entry is a directory object and its content size = 0 - return empty response
                     if (await this._is_empty_directory_content(file_path, fs_context, params)) return null;
 
-            file = await nb_native().fs.open(
-                fs_context,
-                file_path,
-                config.NSFS_OPEN_READ_MODE,
-                native_fs_utils.get_umasked_mode(config.BASE_MODE_FILE),
-            );
+                    file = await nb_native().fs.open(
+                        fs_context,
+                        file_path,
+                        config.NSFS_OPEN_READ_MODE,
+                        native_fs_utils.get_umasked_mode(config.BASE_MODE_FILE),
+                    );
                     stat = await file.stat(fs_context);
                     if (this._is_mismatch_version_id(stat, params.version_id)) {
                         dbg.warn('NamespaceFS.read_object_stream mismatch version_id', params.version_id, this._get_version_id_by_xattr(stat));
@@ -1033,7 +1041,7 @@ class NamespaceFS {
                     retries -= 1;
                     if (retries <= 0 || !native_fs_utils.should_retry_link_unlink(err)) {
                         new NoobaaEvent(NoobaaEvent.OBJECT_GET_FAILED).create_event(params.key,
-                            {bucket_path: this.bucket_path, object_name: params.key}, err);
+                            { bucket_path: this.bucket_path, object_name: params.key }, err);
                         throw err;
                     }
                     await P.delay(get_random_delay(config.NSFS_RANDOM_DELAY_BASE, 0, 50));
@@ -1041,6 +1049,7 @@ class NamespaceFS {
             }
             this._throw_if_delete_marker(stat, params);
             // await this._fail_if_archived_or_sparse_file(fs_context, file_path, stat);
+            this._check_md_conditions(params.md_conditions, stat);
 
             const start = Number(params.start) || 0;
             const end = isNaN(Number(params.end)) ? Infinity : Number(params.end);
@@ -1157,7 +1166,7 @@ class NamespaceFS {
             dbg.log0('NamespaceFS: read_object_stream error file', file_path, err);
             //failed to get object
             new NoobaaEvent(NoobaaEvent.OBJECT_STREAM_GET_FAILED).create_event(params.key,
-                                    {bucket_path: this.bucket_path, object_name: params.key}, err);
+                { bucket_path: this.bucket_path, object_name: params.key }, err);
             throw native_fs_utils.translate_error_codes(err, native_fs_utils.entity_enum.OBJECT);
 
         } finally {
@@ -1178,7 +1187,7 @@ class NamespaceFS {
             } catch (err) {
                 //failed to get object
                 new NoobaaEvent(NoobaaEvent.OBJECT_CLEANUP_FAILED).create_event(params.key,
-                                        { bucket_path: this.bucket_path, object_name: params.key }, err);
+                    { bucket_path: this.bucket_path, object_name: params.key }, err);
                 dbg.warn('NamespaceFS: read_object_stream buffer pool cleanup error', err);
             }
         }
@@ -1221,7 +1230,7 @@ class NamespaceFS {
             this.run_update_issues_report(object_sdk, err);
             //filed to put object
             new NoobaaEvent(NoobaaEvent.OBJECT_UPLOAD_FAILED).create_event(params.key,
-                {bucket_path: this.bucket_path, object_name: params.key}, err);
+                { bucket_path: this.bucket_path, object_name: params.key }, err);
             dbg.warn('NamespaceFS: upload_object buffer pool cleanup error', err);
             throw native_fs_utils.translate_error_codes(err, native_fs_utils.entity_enum.OBJECT);
         } finally {
@@ -1333,7 +1342,7 @@ class NamespaceFS {
     // xattr_copy = false implies on non server side copy fallback copy (copy status = FALLBACK)
     // target file can be undefined when it's a folder created and size is 0
     async _finish_upload({ fs_context, params, open_mode, target_file, upload_path, file_path, digest = undefined,
-            copy_res = undefined, offset }) {
+        copy_res = undefined, offset }) {
         const part_upload = file_path === upload_path;
         const same_inode = params.copy_source && copy_res === COPY_STATUS_ENUM.SAME_INODE;
         const should_replace_xattr = params.copy_source ? copy_res === COPY_STATUS_ENUM.FALLBACK : true;
@@ -1423,7 +1432,7 @@ class NamespaceFS {
         dbg.log2('_move_to_dest', fs_context, source_path, dest_path, target_file, open_mode, key, is_dir_content);
         let retries = config.NSFS_RENAME_RETRIES;
         // will retry renaming a file in case of parallel deleting of the destination path
-        for (;;) {
+        for (; ;) {
             try {
                 await native_fs_utils._make_path_dirs(dest_path, fs_context);
                 if (this._is_versioning_disabled() ||
@@ -1472,7 +1481,7 @@ class NamespaceFS {
         let gpfs_options;
         const is_gpfs = native_fs_utils._is_gpfs(fs_context);
         let retries = config.NSFS_RENAME_RETRIES;
-        for (;;) {
+        for (; ;) {
             try {
                 let new_ver_info;
                 let latest_ver_info;
@@ -1662,8 +1671,8 @@ class NamespaceFS {
                 fs_context,
                 path.join(params.mpu_path, 'create_object_upload'),
                 Buffer.from(create_params), {
-                    mode: native_fs_utils.get_umasked_mode(config.BASE_MODE_FILE),
-                },
+                mode: native_fs_utils.get_umasked_mode(config.BASE_MODE_FILE),
+            },
             );
             return { obj_id: params.obj_id };
         } catch (err) {
@@ -1759,18 +1768,18 @@ class NamespaceFS {
             const entries = await nb_native().fs.readdir(fs_context, params.mpu_path);
             const multiparts = await Promise.all(
                 entries
-                .filter(e => e.name.startsWith('part-'))
-                .map(async e => {
-                    const num = Number(e.name.slice('part-'.length));
-                    const part_path = path.join(params.mpu_path, e.name);
-                    const stat = await nb_native().fs.stat(fs_context, part_path);
-                    return {
-                        num,
-                        size: stat.size,
-                        etag: this._get_etag(stat),
-                        last_modified: new Date(stat.mtime),
-                    };
-                })
+                    .filter(e => e.name.startsWith('part-'))
+                    .map(async e => {
+                        const num = Number(e.name.slice('part-'.length));
+                        const part_path = path.join(params.mpu_path, e.name);
+                        const stat = await nb_native().fs.stat(fs_context, part_path);
+                        return {
+                            num,
+                            size: stat.size,
+                            etag: this._get_etag(stat),
+                            last_modified: new Date(stat.mtime),
+                        };
+                    })
             );
             return {
                 is_truncated: false,
@@ -2064,14 +2073,14 @@ class NamespaceFS {
             dbg.error(`NamespaceFS.delete_object_tagging: failed in dir ${file_path} with error: `, err);
             throw native_fs_utils.translate_error_codes(err, native_fs_utils.entity_enum.OBJECT);
         }
-        return {version_id: params.version_id};
+        return { version_id: params.version_id };
     }
 
     async put_object_tagging(params, object_sdk) {
         const fs_xattr = {};
         const tagging = params.tagging && Object.fromEntries(params.tagging.map(tag => ([tag.key, tag.value])));
         for (const [xattr_key, xattr_value] of Object.entries(tagging)) {
-              fs_xattr[XATTR_TAG + xattr_key] = xattr_value;
+            fs_xattr[XATTR_TAG + xattr_key] = xattr_value;
         }
         let file_path;
         if (params.version_id && this._is_versioning_enabled()) {
@@ -2228,7 +2237,7 @@ class NamespaceFS {
     // INTERNALS //
     ///////////////
 
-    _get_file_path({key}) {
+    _get_file_path({ key }) {
         // not allowing keys with dots follow by slash which can be treated as relative paths and "leave" the bucket_path
         // We are not using `path.isAbsolute` as path like '/../..' will return true and we can still "leave" the bucket_path
         if (key.includes('./')) throw new Error('Bad relative path key ' + key);
@@ -2359,7 +2368,7 @@ class NamespaceFS {
      * @param {fs.Dirent} ent
      * @returns {string}
      */
-     _get_version_entry_key(dir_key, ent) {
+    _get_version_entry_key(dir_key, ent) {
         if (ent.name === config.NSFS_FOLDER_OBJECT_NAME) return dir_key;
         return dir_key + HIDDEN_VERSIONS_PATH + '/' + ent.name;
     }
@@ -2383,6 +2392,54 @@ class NamespaceFS {
 
     _number_of_tags_fs_xttr(xattr) {
         return Object.keys(xattr).filter(xattr_key => xattr_key.includes(XATTR_TAG)).length;
+    }
+
+    /**
+     * @param {http_utils.MDConditions} [conditions]
+     * @param {nb.NativeFSStats} [stat]
+     */
+    _check_md_conditions(conditions, stat) {
+        if (!conditions) return;
+        if (!conditions.if_match_etag &&
+            !conditions.if_none_match_etag &&
+            !conditions.if_modified_since &&
+            !conditions.if_unmodified_since) return;
+
+        const data = stat ? {
+            etag: this._get_etag(stat),
+            last_modified: stat.mtime.getTime(),
+        } : {
+            etag: '',
+            last_modified: 0,
+        };
+
+        // See http://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectHEAD.html#req-header-consideration-1
+        // See https://tools.ietf.org/html/rfc7232 (HTTP Conditional Requests)
+        let matched = false;
+        let unmatched = false;
+
+        if (conditions.if_match_etag) {
+            if (!(stat && http_utils.match_etag(conditions.if_match_etag, data.etag))) {
+                throw new RpcError('IF_MATCH_ETAG', 'check_md_conditions failed', data);
+            }
+            matched = true;
+        }
+        if (conditions.if_none_match_etag) {
+            if (stat && http_utils.match_etag(conditions.if_none_match_etag, data.etag)) {
+                throw new RpcError('IF_NONE_MATCH_ETAG', 'check_md_conditions failed', data);
+            }
+            unmatched = true;
+        }
+        if (conditions.if_modified_since) {
+            if (!unmatched && (!stat || conditions.if_modified_since > data.last_modified)) {
+                throw new RpcError('IF_MODIFIED_SINCE', 'check_md_conditions failed', data);
+            }
+        }
+        if (conditions.if_unmodified_since) {
+            if (!matched && (!stat || conditions.if_unmodified_since < data.last_modified)) {
+                throw new RpcError('IF_UNMODIFIED_SINCE', 'check_md_conditions failed', data);
+            }
+        }
     }
 
     /**
@@ -2421,7 +2478,7 @@ class NamespaceFS {
             is_latest,
             delete_marker,
             storage_class,
-            restore_status: GlacierBackend.get_restore_status(stat.xattr, new Date(), this._get_file_path({key})),
+            restore_status: GlacierBackend.get_restore_status(stat.xattr, new Date(), this._get_file_path({ key })),
             xattr: to_xattr(stat.xattr),
             tag_count,
 
@@ -2726,7 +2783,7 @@ class NamespaceFS {
     }
 
     _get_version_id_by_xattr(stat) {
-       return (stat && stat.xattr[XATTR_VERSION_ID]) || 'null';
+        return (stat && stat.xattr[XATTR_VERSION_ID]) || 'null';
     }
 
     // returns version path of the form bucket_path/dir/.versions/{key}_{version_id}
@@ -2861,7 +2918,7 @@ class NamespaceFS {
     async _delete_single_object_versioned(fs_context, key, version_id) {
         let retries = config.NSFS_RENAME_RETRIES;
         const latest_version_path = this._get_file_path({ key });
-        for (;;) {
+        for (; ;) {
             let file_path;
             let gpfs_options;
             try {
@@ -2986,7 +3043,7 @@ class NamespaceFS {
         dbg.log1('Namespace_fs._promote_version_to_latest', params, deleted_version_info, latest_ver_path);
 
         let retries = config.NSFS_RENAME_RETRIES;
-        for (;;) {
+        for (; ;) {
             try {
                 const latest_version_info = await this._get_version_info(fs_context, latest_ver_path);
                 if (latest_version_info) return;
@@ -3038,7 +3095,7 @@ class NamespaceFS {
         const is_gpfs = native_fs_utils._is_gpfs(fs_context);
         let retries = config.NSFS_RENAME_RETRIES;
         let latest_ver_info;
-        for (;;) {
+        for (; ;) {
             try {
                 // TODO get latest version from file in POSIX like in GPFS path
                 latest_ver_info = await this._get_version_info(fs_context, latest_ver_path);
@@ -3058,7 +3115,7 @@ class NamespaceFS {
                     const bucket_tmp_dir_path = this.get_bucket_tmpdir_full_path();
                     if (this._is_versioning_enabled() || suspended_and_latest_is_not_null) {
                         await native_fs_utils._make_path_dirs(versioned_path, fs_context);
-                         await native_fs_utils.safe_move_posix(fs_context, latest_ver_path, versioned_path, latest_ver_info,
+                        await native_fs_utils.safe_move_posix(fs_context, latest_ver_path, versioned_path, latest_ver_info,
                             bucket_tmp_dir_path);
                         if (suspended_and_latest_is_not_null) {
                             // remove a version (or delete marker) with null version ID from .versions/ (if exists)
@@ -3097,7 +3154,7 @@ class NamespaceFS {
         await this._check_path_in_bucket_boundaries(fs_context, null_versioned_path);
         let gpfs_options;
         let retries = config.NSFS_RENAME_RETRIES;
-        for (;;) {
+        for (; ;) {
             try {
                 const null_versioned_path_info = await this._get_version_info(fs_context, null_versioned_path);
                 dbg.log1('Namespace_fs._delete_null_version_from_versions_directory:', null_versioned_path, null_versioned_path_info);
@@ -3125,7 +3182,7 @@ class NamespaceFS {
         let retries = config.NSFS_RENAME_RETRIES;
         let upload_params;
         let delete_marker_version_id;
-        for (;;) {
+        for (; ;) {
             try {
                 upload_params = await this._start_upload(fs_context, undefined, undefined, params, 'w');
 
@@ -3176,12 +3233,12 @@ class NamespaceFS {
 
             // find max past version by comparing the mtimeNsBigint val
             const max_entry_info = arr.reduce((acc, cur) => (cur && cur.mtimeNsBigint > acc.mtimeNsBigint ? cur : acc),
-                                        { mtimeNsBigint: BigInt(0), name: undefined });
+                { mtimeNsBigint: BigInt(0), name: undefined });
             return max_entry_info.mtimeNsBigint > BigInt(0) &&
                 this._get_version_info(fs_context, path.join(versions_dir, max_entry_info.name));
         } catch (err) {
             dbg.warn('namespace_fs.find_max_version_past: .versions/ folder could not be found', err);
-       }
+        }
     }
 
     _is_hidden_version_path(dir_key) {
@@ -3230,7 +3287,7 @@ class NamespaceFS {
             }
             return {
                 move_to_versions: { src_file: dst_file, dir_file },
-                move_to_dst: { src_file, dst_file, dir_file}
+                move_to_dst: { src_file, dst_file, dir_file }
             };
         } catch (err) {
             dbg.warn('NamespaceFS._open_files_gpfs couldn\'t open files', err);
