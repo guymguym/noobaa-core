@@ -30,6 +30,7 @@ type NodeType =
 type S3Response = ServerResponse;
 type S3Request = IncomingMessage & {
     object_sdk: ObjectSDK;
+    session_token?: {};
 };
 
 type ReplicationLogAction = 'copy' | 'delete' | 'conflict';

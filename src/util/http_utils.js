@@ -338,7 +338,7 @@ function send_reply(req, res, reply, options) {
         dbg.log1('HTTP REPLY XML', req.method, req.originalUrl,
             JSON.stringify(req.headers),
             xml_reply.length <= 2000 ?
-            xml_reply : xml_reply.slice(0, 1000) + ' ... ' + xml_reply.slice(-1000));
+                xml_reply : xml_reply.slice(0, 1000) + ' ... ' + xml_reply.slice(-1000));
         if (res.headersSent) {
             dbg.log0('Sending xml reply in body, bit too late for headers');
         } else {
@@ -698,12 +698,27 @@ function parse_content_length(req, options) {
     return size;
 }
 
+/**
+ * 
+ * @param {nb.S3Request} req 
+ * @param {*} options 
+ * @returns 
+ */
 function authorize_session_token(req, options) {
-    if (!req.headers['x-amz-security-token']) {
+    const token = /** @type {string} */ (req.headers['x-amz-security-token']);
+    const LDAP = 'LDAP:';
+    if (!token) return;
+    if (token.startsWith(LDAP)) {
+        const [, access_key, secret_key] = token.split(':');
+        req.session_token = {
+            // assumed_role_access_key: access_key
+            access_key,
+            secret_key
+        };
         return;
     }
     try {
-        req.session_token = jwt_utils.authorize_jwt_token(req.headers['x-amz-security-token']);
+        req.session_token = jwt_utils.authorize_jwt_token(token);
     } catch (err) {
         dbg.error('http_utils.authorize_session_token JWT VERIFY FAILED', err);
         if (err.name === 'TokenExpiredError') throw new options.ErrorClass(options.error_token_expired);

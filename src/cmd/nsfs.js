@@ -41,6 +41,8 @@ const BucketSpaceFS = require('../sdk/bucketspace_fs');
 const SensitiveString = require('../util/sensitive_string');
 const endpoint_stats_collector = require('../sdk/endpoint_stats_collector');
 //const { RPC_BUFFERS } = require('../rpc');
+const pkg = require('../../package.json');
+const StsSDK = require('../sdk/sts_sdk');
 const AccountSDK = require('../sdk/account_sdk');
 const AccountSpaceFS = require('../sdk/accountspace_fs');
 const NoobaaEvent = require('../manage_nsfs/manage_nsfs_events_utils').NoobaaEvent;
@@ -123,23 +125,9 @@ let nsfs_config_root;
 
 class NsfsObjectSDK extends ObjectSDK {
     constructor(fs_root, fs_config, account, versioning, config_root, nsfs_system) {
-        // const rpc_client_hooks = new_rpc_client_hooks();
-        // rpc_client_hooks.account.read_account_by_access_key = async ({ access_key }) => {
-        //     if (access_key) {
-        //         return { access_key };
-        //     }
-        // };
-        // rpc_client_hooks.bucket.read_bucket_sdk_info = async ({ name }) => {
-        //     if (name) {
-        //         return { name };
-        //     }
-        // };
-        let bucketspace;
-        if (config_root) {
-            bucketspace = new BucketSpaceFS({ config_root }, endpoint_stats_collector.instance());
-        } else {
-            bucketspace = new BucketSpaceSimpleFS({ fs_root });
-        }
+        const bucketspace = config_root ?
+            new BucketSpaceFS({ config_root }, endpoint_stats_collector.instance()) :
+            new BucketSpaceSimpleFS({ fs_root });
         super({
             rpc_client: null,
             internal_rpc_client: null,
@@ -217,27 +205,67 @@ class NsfsObjectSDK extends ObjectSDK {
 // NsfsAccountSDK was based on NsfsObjectSDK
 // simple flow was not implemented
 class NsfsAccountSDK extends AccountSDK {
-    constructor(fs_root, fs_config, account, config_root) {
-        let bucketspace;
-        let accountspace;
-        if (config_root) {
-            bucketspace = new BucketSpaceFS({ config_root }, endpoint_stats_collector.instance());
-            accountspace = new AccountSpaceFS({ config_root });
-        } else {
-            bucketspace = new BucketSpaceSimpleFS({ fs_root });
-            accountspace = new AccountSpaceFS({ fs_root });
-        }
+    constructor(fs_root, fs_config, account, config_root, bucketspace) {
+        const accountspace = config_root ?
+            new AccountSpaceFS({ config_root }) :
+            new AccountSpaceFS({ fs_root });
         super({
             rpc_client: null,
             internal_rpc_client: null,
-            bucketspace: bucketspace,
-            accountspace: accountspace,
+            bucketspace,
+            accountspace,
         });
         this.nsfs_config_root = nsfs_config_root;
         this.nsfs_fs_root = fs_root;
         this.nsfs_fs_config = fs_config;
         this.nsfs_account = account;
         this.nsfs_namespaces = {};
+    }
+}
+
+class NsfsStsSDK extends StsSDK {
+    constructor(bucketspace) {
+        const mock_rpc_client = { options: {} };
+        super(mock_rpc_client, mock_rpc_client, bucketspace);
+    }
+}
+
+async function init_nc_system(config_root) {
+    const config_fs = new ConfigFS(config_root);
+    const system_data = await config_fs.get_system_config_file({ silent_if_missing: true });
+
+    const hostname = os.hostname();
+    // If the system data already exists, we should not create it again
+    const updated_system_json = system_data || {};
+    if (updated_system_json[hostname]?.current_version && updated_system_json.config_directory) return;
+    if (!updated_system_json[hostname]?.current_version) {
+        updated_system_json[hostname] = {
+            current_version: pkg.version,
+            upgrade_history: { successful_upgrades: [], last_failure: undefined }
+        };
+    }
+    // If it's the first time a config_directory data is added to system.json
+    if (!updated_system_json.config_directory) {
+        updated_system_json.config_directory = {
+            config_dir_version: config_fs.config_dir_version,
+            upgrade_package_version: pkg.version,
+            phase: 'CONFIG_DIR_UNLOCKED',
+            upgrade_history: { successful_upgrades: [], last_failure: undefined }
+        };
+    }
+    try {
+        if (system_data) {
+            await config_fs.update_system_config_file(JSON.stringify(updated_system_json));
+            console.log('updated NC system data with version: ', pkg.version);
+        } else {
+            await config_fs.create_system_config_file(JSON.stringify(updated_system_json));
+            console.log('created NC system data with version: ', pkg.version);
+        }
+    } catch (err) {
+        const msg = 'failed to create/update NC system data due to - ' + err.message;
+        const error = new Error(msg);
+        console.error(msg, err);
+        throw error;
     }
 }
 
@@ -350,6 +378,7 @@ async function main(argv = minimist(process.argv.slice(2))) {
             init_request_sdk: (req, res) => {
                 req.object_sdk = new NsfsObjectSDK(fs_root, fs_config, account, versioning, nsfs_config_root, system_data);
                 req.account_sdk = new NsfsAccountSDK(fs_root, fs_config, account, nsfs_config_root);
+                req.sts_sdk = new NsfsStsSDK(req.object_sdk.bucketspace);
             }
         });
         if (config.ALLOW_HTTP) {
