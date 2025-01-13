@@ -905,6 +905,7 @@ config.NSFS_LOW_FREE_SPACE_PERCENT_UNLEASH = 0.10;
 config.ANONYMOUS_ACCOUNT_NAME = 'anonymous';
 
 config.NFSF_UPLOAD_STREAM_MEM_THRESHOLD = 8 * 1024 * 1024;
+config.NFSF_DOWNLOAD_STREAM_MEM_THRESHOLD = 8 * 1024 * 1024;
 
 ////////////////////////////
 // NSFS NON CONTAINERIZED //
@@ -1004,6 +1005,14 @@ config.DEFAULT_REGION = 'us-east-1';
 /////////////////////////
 
 config.VACCUM_ANALYZER_INTERVAL = 86400000;
+
+
+//////////////
+///  RDMA  ///
+//////////////
+
+config.RDMA_ENABLED = true; // TODO STILL EXPERIMENTAL - should be false by default
+
 
 /////////////////////
 //                 //
