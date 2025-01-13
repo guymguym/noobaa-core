@@ -21,20 +21,25 @@
     },
 
     'targets': [{
-	'variables': {
-            'BUILD_S3SELECT%':0,
-            'BUILD_S3SELECT_PARQUET%':0
-        },
         'target_name': 'nb_native',
+        'variables': {
+            'CUOBJ_CLIENT%': 0,
+            'CUOBJ_SERVER%': 0,
+            'CUOBJ_PATH%': '../../../cuObject-0.7.2-Linux_x86_64/src',
+            'BUILD_S3SELECT%': 0,
+            'BUILD_S3SELECT_PARQUET%': 0
+        },
+        'conditions': [
+            [ 'CUOBJ_CLIENT==1', { 'defines': ['CUOBJ_CLIENT=1'], 'include_dirs': ['<(CUOBJ_PATH)/include'] }],
+            [ 'CUOBJ_SERVER==1', { 'defines': ['CUOBJ_SERVER=1'], 'include_dirs': ['<(CUOBJ_PATH)/include'] }],
+            [ 'BUILD_S3SELECT==1', {
+                'dependencies': ['s3select/s3select.gyp:s3select'],
+                'defines': ['BUILD_S3SELECT=1']
+            }],
+        ],
         'include_dirs': [
             '<@(napi_include_dirs)',
         ],
-	'conditions': [
-	    ['BUILD_S3SELECT==1', {
-		'dependencies': ['s3select/s3select.gyp:s3select'],
-		'cflags': ['-DBUILD_S3SELECT=1']
-	    }]
-	],
         'dependencies': [
             '<@(napi_dependencies)',
             'third_party/cm256.gyp:cm256',
@@ -76,10 +81,13 @@
             'util/rabin.cpp',
             'util/snappy.h',
             'util/snappy.cpp',
+            'util/worker.h',
             'util/zlib.h',
             'util/zlib.cpp',
             # fs
             'fs/fs_napi.cpp',
+            'rdma/rdma_server_napi.cpp',
+            'rdma/rdma_client_napi.cpp',
         ],
     }, {
         'target_name': 'nb_native_nan',
