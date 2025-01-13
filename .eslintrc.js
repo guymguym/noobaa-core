@@ -265,6 +265,7 @@ module.exports = {
         // newlines to separate vars and return are not productive
         'newline-after-var': 'off',
         'newline-before-return': 'off',
+        'new-cap': 'off',
 
         // using console in node.js is cool
         'no-console': 'off',

@@ -87,12 +87,12 @@ async function read_stream(readable) {
     };
     await new Promise((resolve, reject) =>
         readable
-        .on('data', data => {
-            res.buffers.push(data);
-            res.total_length += data.length;
-        })
-        .once('error', reject)
-        .once('end', resolve)
+            .on('data', data => {
+                res.buffers.push(data);
+                res.total_length += data.length;
+            })
+            .once('error', reject)
+            .once('end', resolve)
     );
     return res;
 }
@@ -184,15 +184,30 @@ class BuffersPool {
      *      buf_size: number;
      *      sem: import('./semaphore').Semaphore;
      *      warning_timeout: number;
+     *      release_unused_interval?: number;
      *      buffer_alloc?: (size: number) => Buffer;
      * }} params
      */
-    constructor({ buf_size, sem, warning_timeout, buffer_alloc }) {
+    constructor({ buf_size, sem, warning_timeout, release_unused_interval, buffer_alloc }) {
         this.buf_size = buf_size;
         this.buffers = [];
         this.sem = sem;
         this.warning_timeout = warning_timeout;
         this.buffer_alloc = buffer_alloc || Buffer.allocUnsafeSlow;
+        this.min_unused_in_interval = 0;
+        if (release_unused_interval) {
+            this.release_interval = setInterval(() => this._release_unused_buffers(), release_unused_interval).unref();
+        }
+    }
+
+    _release_unused_buffers() {
+        if (this.min_unused_in_interval > 0) {
+            const release_count = Math.min(this.buffers.length, Math.floor(this.min_unused_in_interval / 2));
+            dbg.log0('BuffersPool: releasing unused buffers, min_unused_in_interval', this.min_unused_in_interval, 'release_count', release_count);
+            this.buffers.length -= release_count;
+        }
+        // reset the counter for the next interval
+        this.min_unused_in_interval = this.buffers.length;
     }
 
     /**
@@ -214,6 +229,8 @@ class BuffersPool {
         } else {
             buffer = this.buffer_alloc(this.buf_size);
         }
+        // track the minimum unused buffers in last interval to be able to release back to the system
+        this.min_unused_in_interval = Math.min(this.min_unused_in_interval, this.buffers.length);
         if (this.warning_timeout) {
             const err = new Error('Warning stuck buffer_pool buffer');
             warning_timer = setTimeout(() => {
@@ -229,6 +246,24 @@ class BuffersPool {
         return { buffer, callback };
     }
 
+    /**
+     * Invoke an async callback with a buffer from the pool,
+     * and release the buffer back to the pool when its promise is fulfilled.
+     * 
+     * @template T
+     * @param {(buffer: Buffer) => Promise<T>} func 
+     * @returns {Promise<T>}
+     */
+    async use_buffer(func) {
+        const { buffer, callback } = await this.get_buffer();
+        try {
+            const ret = await func(buffer);
+            return ret;
+        } finally {
+            callback();
+        }
+    }
+
     [util.inspect.custom]() {
         return 'BufferPool.get_buffer: sem value: ' + this.sem._value +
             ' waiting_value: ' + this.sem._waiting_value +
@@ -242,6 +277,8 @@ class MultiSizeBuffersPool {
      *      sorted_buf_sizes: Array<{
      *           size: number;
      *           sem_size: number;
+     *           is_default?: boolean;
+     *           release_unused_interval?: number;
      *      }>;
      *      warning_timeout?: number;
      *      sem_timeout?: number,
@@ -251,8 +288,10 @@ class MultiSizeBuffersPool {
      * }} params
      */
     constructor({ sorted_buf_sizes, warning_timeout, sem_timeout, sem_timeout_error_code, sem_warning_timeout, buffer_alloc }) {
-        this.pools = sorted_buf_sizes.map(({ size, sem_size }) =>
-            new BuffersPool({
+        /** @type {BuffersPool} */
+        this.default_pool = null;
+        this.pools = sorted_buf_sizes.map(({ size, sem_size, is_default, release_unused_interval }) => {
+            const pool = new BuffersPool({
                 buf_size: size,
                 sem: new semaphore.Semaphore(sem_size, {
                     timeout: sem_timeout,
@@ -260,24 +299,52 @@ class MultiSizeBuffersPool {
                     warning_timeout: sem_warning_timeout,
                 }),
                 warning_timeout: warning_timeout,
+                release_unused_interval,
                 buffer_alloc
-            }));
+            });
+            if (is_default) {
+                this.default_pool ||= pool;
+            }
+            return pool;
+        });
+        // if no pool is marked as default, use the largest pool as default
+        if (!this.default_pool) {
+            this.default_pool = this.pools[this.pools.length - 1];
+        }
     }
 
     /**
+     * Returns the buffers pool that fits the given size.
+     * It returns the largest pool if no size is provided.
+     * It returns the smallest pool that covers the given size.
+     * If no pool , the largest pool is returned.
+     * The caller should be prepared to use buffers larger than the requested size, 
+     * or smaller than the requested size if there is no pool for that size.
+     * @param {number} [size]
      * @returns {BuffersPool}
      */
     get_buffers_pool(size) {
-        const largest = this.pools[this.pools.length - 1];
         if (typeof size !== 'number' || size < 0) {
-            return largest;
+            return this.default_pool;
         }
         for (const bp of this.pools) {
             if (size <= bp.buf_size) {
                 return bp;
             }
         }
-        return largest;
+        return this.default_pool;
+    }
+
+    /**
+     * Convenience method to use a buffer from a pool
+     * 
+     * @template T
+     * @param {number} size
+     * @param {(buffer: Buffer) => Promise<T>} func 
+     * @returns {Promise<T>}
+     */
+    async use_buffer(size, func) {
+        return this.get_buffers_pool(size).use_buffer(func);
     }
 }
 
