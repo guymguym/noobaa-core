@@ -7,9 +7,11 @@ const AWS = require('aws-sdk');
 const minimist = require('minimist');
 const http = require('http');
 const https = require('https');
-const size_utils = require('../util/size_utils');
+const assert = require('assert');
+const nb_native = require('../util/nb_native');
+const rdma_utils = require('../util/rdma_utils');
 const RandStream = require('../util/rand_stream');
-const { cluster } = require('../util/fork_utils');
+const Speedometer = require('../util/speedometer');
 
 const size_units_mult = {
     KB: 1024,
@@ -50,18 +52,16 @@ if (argv.upload && data_size < argv.part_size * 1024 * 1024) {
     throw new Error('data_size lower than part_size ' + data_size);
 }
 
-const start_time = Date.now();
-
-let op_count = 0;
-let total_size = 0;
-let op_lat_sum = 0;
-let last_reported = start_time;
-let last_op_count = 0;
-let last_total_size = 0;
-let last_op_lat_sum = 0;
+/**
+ * @typedef {{
+ *      id: number;
+ *      buf?: Buffer;
+ *      rdma_client?: nb.CuObjClientNapi;
+ * }} Worker
+ */
 
 /**
- * @type {() => Promise<number>}
+ * @type {(worker: Worker) => Promise<number>}
  */
 let op_func;
 
@@ -70,9 +70,9 @@ if (argv.help) {
 } else if (typeof argv.head === 'string') {
     op_func = head_object;
 } else if (typeof argv.get === 'string') {
-    op_func = get_object;
+    op_func = argv.rdma ? get_object_rdma : get_object;
 } else if (typeof argv.put === 'string') {
-    op_func = put_object;
+    op_func = argv.rdma ? put_object_rdma : put_object;
 } else if (typeof argv.upload === 'string') {
     op_func = upload_object;
 } else if (typeof argv.delete === 'string') {
@@ -88,6 +88,7 @@ http.globalAgent.keepAlive = true;
 // @ts-ignore
 https.globalAgent.keepAlive = true;
 
+const is_https = argv.endpoint.startsWith('https:');
 const s3 = new AWS.S3({
     endpoint: argv.endpoint,
     accessKeyId: argv.access_key && String(argv.access_key),
@@ -97,138 +98,51 @@ const s3 = new AWS.S3({
     computeChecksums: argv.checksum || false, // disabled by default for performance
     s3DisableBodySigning: !argv.signing || true, // disabled by default for performance
     region: argv.region || 'us-east-1',
+    httpOptions: {
+        agent: is_https ?
+            new https.Agent({
+                localAddress: argv.local_ip,
+                keepAlive: true,
+                rejectUnauthorized: !argv.selfsigned,
+            }) : new http.Agent({
+                localAddress: argv.local_ip,
+                keepAlive: true,
+            })
+    }
 });
 
 // AWS config does not use https.globalAgent
 // so for https we need to set the agent manually
-if (s3.endpoint.protocol === 'https:') {
-    s3.config.update({
-        httpOptions: {
-            agent: new https.Agent({
-                keepAlive: true,
-                rejectUnauthorized: !argv.selfsigned,
-            })
+if (is_https && !argv.selfsigned) {
+    // @ts-ignore
+    AWS.events.on('error', err => {
+        if (err.message === 'self signed certificate') {
+            setTimeout(() => console.log(
+                '\n*** You can accept self signed certificates with: --selfsigned\n'
+            ), 10);
         }
     });
-    if (!argv.selfsigned) {
-        // @ts-ignore
-        AWS.events.on('error', err => {
-            if (err.message === 'self signed certificate') {
-                setTimeout(() => console.log(
-                    '\n*** You can accept self signed certificates with: --selfsigned\n'
-                ), 10);
-            }
-        });
-    }
 }
 
-if (cluster.isPrimary) {
-    run_master();
-} else {
-    run_worker();
-}
+const speedometer = new Speedometer('S3');
+speedometer.run_workers(argv.forks, main, argv);
 
-async function run_master() {
-    console.log(argv);
-    if (argv.forks > 1) {
-        for (let i = 0; i < argv.forks; i++) {
-            const worker = cluster.fork();
-            console.warn('WORKER', worker.process.pid, 'STARTED');
-            worker.on('message', handle_message);
-        }
-        cluster.on('exit', (worker, code, signal) => {
-            console.warn('WORKER', worker.process.pid, 'EXITED', code, signal);
-            exit_all();
-        });
-    } else {
-        run_worker();
-    }
-
-    setInterval(run_reporter, 1000).unref();
-}
-
-function run_reporter() {
-
-    const now = Date.now();
-    const time = now - last_reported;
-    const time_total = now - start_time;
-    const ops = op_count - last_op_count;
-    const size = total_size - last_total_size;
-    const lat = op_lat_sum - last_op_lat_sum;
-    const tx = size / time * 1000;
-    const tx_total = total_size / time_total * 1000;
-
-    console.log(`TOTAL: Throughput ${
-        size_utils.human_size(tx_total)
-        }/sec Latency ${
-        op_count ? (op_lat_sum / op_count).toFixed(3) : 0
-        }ms IOPS ${
-        (op_count / time_total * 1000).toFixed(3)
-        }/sec OPS ${op_count} | CURRENT: Throughput ${
-        size_utils.human_size(tx)
-        }/sec Latency ${
-        ops ? (lat / ops).toFixed(3) : 0
-        }ms IOPS ${
-        (ops / time * 1000).toFixed(3)
-        }/sec OPS ${ops}`);
-
-    last_reported = now;
-    last_op_count = op_count;
-    last_total_size = total_size;
-    last_op_lat_sum = op_lat_sum;
-
-    if (now - start_time > argv.time * 1000) {
-        console.warn('TEST DONE');
-        exit_all();
-    }
-}
-
-function exit_all() {
-    Object.keys(cluster.workers).forEach(w => cluster.workers[w].send('exit'));
-    process.exit();
-}
-
-/**
- * @typedef {{
- *  ops: number;
- *  size: number;
- *  took_ms: number;
- * }} Msg
- * @param {Msg|'exit'} msg 
- */
-function handle_message(msg) {
-    if (msg === 'exit') {
-        process.exit();
-    } else if (msg.took_ms >= 0) {
-        op_count += msg.ops;
-        total_size += msg.size;
-        op_lat_sum += msg.took_ms;
-    }
-}
-
-function send_message(msg) {
-    if (process.send) {
-        process.send(msg);
-    } else {
-        handle_message(msg);
-    }
-}
-
-async function run_worker() {
-    if (process.send) process.on('message', handle_message);
+async function main() {
+    if (argv.time) setTimeout(() => process.exit(), Number(argv.time) * 1000);
     for (let i = 0; i < argv.concur; ++i) {
-        setImmediate(run_worker_loop);
+        setImmediate(run_worker_loop, i);
     }
 }
 
-async function run_worker_loop() {
+async function run_worker_loop(id) {
     try {
-        for (;;) {
-            const hrtime = process.hrtime();
-            const size = await op_func();
-            const hrtook = process.hrtime(hrtime);
-            const took_ms = (hrtook[0] * 1e-3) + (hrtook[1] * 1e-6);
-            send_message({ ops: 1, size, took_ms });
+        const worker = { id };
+        for (; ;) {
+            const start = process.hrtime.bigint();
+            const size = await op_func(worker);
+            const took_ms = Number(process.hrtime.bigint() - start) / 1e6;
+            speedometer.add_op(took_ms);
+            if (size) speedometer.update(size);
         }
     } catch (err) {
         console.error('WORKER', process.pid, 'ERROR', err.stack || err);
@@ -251,7 +165,7 @@ let _list_objects_promise = null;
  * @returns {Promise<AWS.S3.Object>}
  */
 async function get_next_object(prefix) {
-    while (_list_objects_next >= _list_objects.Contents.length) {
+    while (_list_objects_next >= _list_objects.Contents.length && _list_objects.IsTruncated) {
         if (_list_objects_promise) {
             // console.log('get_next_object: wait for promise');
             await _list_objects_promise;
@@ -264,15 +178,18 @@ async function get_next_object(prefix) {
                 Prefix: prefix,
                 Marker: marker,
             }).promise();
-            _list_objects = await _list_objects_promise;
+            const res = await _list_objects_promise;
+            const prev = _list_objects;
+            _list_objects = res;
+            _list_objects.Contents = prev.Contents.concat(_list_objects.Contents);
             _list_objects_promise = null;
-            _list_objects_next = 0;
             console.log('get_next_object: got', _list_objects.Contents.length, 'objects from marker', marker);
         }
     }
 
     const obj = _list_objects.Contents[_list_objects_next];
     _list_objects_next += 1;
+    _list_objects_next %= _list_objects.Contents.length;
     return obj;
 }
 
@@ -286,14 +203,14 @@ async function get_object() {
     const obj = await get_next_object(argv.get);
     await new Promise((resolve, reject) => {
         s3.getObject({
-                Bucket: argv.bucket,
-                Key: obj.Key,
-            })
+            Bucket: argv.bucket,
+            Key: obj.Key,
+        })
             .createReadStream()
             .on('finish', resolve)
             .on('error', reject)
             .on('data', data => {
-                send_message({ ops: 0, size: data.length, took_ms: 0 });
+                speedometer.update(data.length);
             });
     });
     return 0;
@@ -311,15 +228,15 @@ async function delete_object() {
 async function put_object() {
     const upload_key = argv.put + '-' + Date.now().toString(36);
     await s3.putObject({
-            Bucket: argv.bucket,
-            Key: upload_key,
-            ContentLength: data_size,
-            Body: new RandStream(data_size, {
-                highWaterMark: 1024 * 1024,
-            })
+        Bucket: argv.bucket,
+        Key: upload_key,
+        ContentLength: data_size,
+        Body: new RandStream(data_size, {
+            highWaterMark: 1024 * 1024,
         })
+    })
         .on('httpUploadProgress', progress => {
-            send_message({ ops: 0, size: progress.loaded, took_ms: 0 });
+            speedometer.update(progress.loaded);
         })
         .promise();
     return 0;
@@ -328,18 +245,18 @@ async function put_object() {
 async function upload_object() {
     const upload_key = argv.upload + '-' + Date.now().toString(36);
     await s3.upload({
-            Bucket: argv.bucket,
-            Key: upload_key,
-            ContentLength: data_size,
-            Body: new RandStream(data_size, {
-                highWaterMark: 1024 * 1024,
-            })
-        }, {
-            partSize: argv.part_size * 1024 * 1024,
-            queueSize: argv.part_concur
+        Bucket: argv.bucket,
+        Key: upload_key,
+        ContentLength: data_size,
+        Body: new RandStream(data_size, {
+            highWaterMark: 1024 * 1024,
         })
+    }, {
+        partSize: argv.part_size * 1024 * 1024,
+        queueSize: argv.part_concur
+    })
         .on('httpUploadProgress', progress => {
-            send_message({ ops: 0, size: progress.loaded, took_ms: 0 });
+            speedometer.update(progress.loaded);
         })
         .promise();
     return 0;
@@ -350,6 +267,81 @@ async function create_bucket() {
     await s3.createBucket({ Bucket: new_bucket }).promise();
     return 0;
 }
+
+/**
+ * @param {Worker} worker 
+ * @returns {Promise<number>}
+ */
+async function get_object_rdma(worker) {
+    if (!worker.buf) {
+        // TODO Add cuda buffer support
+        worker.buf = nb_native().fs.dio_buffer_alloc(data_size);
+    }
+    if (!worker.rdma_client) {
+        worker.rdma_client = new (nb_native().CuObjClientNapi)();
+    }
+    const obj = await get_next_object(argv.get);
+    const ret_size = await worker.rdma_client.rdma('GET', worker.buf, async (rdma_info, callback) => {
+        try {
+            const req = s3.getObject({
+                Bucket: argv.bucket,
+                Key: obj.Key,
+            });
+            req.on('build', () => {
+                req.httpRequest.headers[rdma_utils.X_NOOBAA_RDMA] =
+                    rdma_utils.encode_rdma_header({ ...rdma_info });
+            });
+            const res = await req.promise();
+            const rdma_hdr = res.$response.httpResponse.headers[rdma_utils.X_NOOBAA_RDMA];
+            const rdma_reply = rdma_utils.decode_rdma_header(rdma_hdr);
+            callback(null, Number(rdma_reply.size));
+        } catch (err) {
+            callback(err);
+        }
+    });
+
+    assert.strictEqual(ret_size, data_size);
+    return ret_size;
+}
+
+/**
+ * @param {Worker} worker 
+ * @returns {Promise<number>}
+ */
+async function put_object_rdma(worker) {
+    if (!worker.buf) {
+        // TODO Add cuda buffer support
+        worker.buf = nb_native().fs.dio_buffer_alloc(data_size);
+    }
+    if (!worker.rdma_client) {
+        worker.rdma_client = new (nb_native().CuObjClientNapi)();
+    }
+    const ret_size = await worker.rdma_client.rdma('PUT', worker.buf, async (rdma_info, callback) => {
+        try {
+            // const upload_key = argv.put + '-' + Date.now().toString(36);
+            const upload_key = argv.put; // overwriting the same key
+            const req = s3.putObject({
+                Bucket: argv.bucket,
+                Key: upload_key,
+            });
+            req.on('build', () => {
+                req.httpRequest.headers[rdma_utils.X_NOOBAA_RDMA] =
+                    rdma_utils.encode_rdma_header({ ...rdma_info });
+            });
+            const res = await req.promise();
+            const rdma_hdr = res.$response.httpResponse.headers[rdma_utils.X_NOOBAA_RDMA];
+            const rdma_reply = rdma_utils.decode_rdma_header(rdma_hdr);
+            callback(null, Number(rdma_reply.size));
+        } catch (err) {
+            callback(err);
+        }
+    });
+
+    assert.strictEqual(ret_size, data_size);
+    return ret_size;
+}
+
+
 
 function print_usage() {
     console.log(`
@@ -378,6 +370,7 @@ General S3 Flags:
   --ssl                  (default is false) Force SSL connection
   --aws                  (default is false) Use AWS endpoint and subdomain-style buckets
   --checksum             (default is false) Calculate checksums on data. slower.
+  --rdma                 (default is false) Use RDMA to transfer object data.
 `);
     process.exit();
 }
