@@ -2,7 +2,221 @@
 
 'use strict';
 
+const stream = require('stream');
+const config = require('../../config');
 const nb_native = require('./nb_native');
+const stream_utils = require('./stream_utils');
+const native_fs_utils = require('./native_fs_utils');
+
+/** @typedef {import('./buffer_utils').MultiSizeBuffersPool} MultiSizeBuffersPool */
+
+/**
+ * FileReader is a Readable stream that reads data from a filesystem file.
+ * 
+ * The Readable interface is easy to use, however, for us, it is not efficient enough 
+ * because it has to allocate a new buffer for each chunk of data read from the file.
+ * This allocation and delayed garbage collection becomes expensive in high throughputs
+ * (which is something to improve in nodejs itself).
+ * 
+ * To solve this, we added the optimized method read_into_stream(target_stream) which uses 
+ * a buffer pool to recycle the buffers and avoid the allocation overhead.
+ * 
+ * The target_stream should be a Writable stream that will not use the buffer after the 
+ * write callback, since we will release the buffer back to the pool in the callback.
+ */
+class FileReader extends stream.Readable {
+
+    /**
+     * @param {{
+     *      fs_context: nb.NativeFSContext,
+     *      file: nb.NativeFile,
+     *      file_path: string,
+     *      start: number,
+     *      end: number,
+     *      stat: nb.NativeFSStats,
+     *      multi_buffer_pool: MultiSizeBuffersPool,
+     *      signal: AbortSignal,
+     *      stats?: import('../sdk/endpoint_stats_collector').EndpointStatsCollector,
+     *      bucket?: string,
+     *      namespace_resource_id?: string,
+     * }} params
+     */
+    constructor({ fs_context,
+        file,
+        file_path,
+        start,
+        end,
+        stat,
+        multi_buffer_pool,
+        signal,
+        stats,
+        bucket,
+        namespace_resource_id,
+    }) {
+        super({ highWaterMark: config.NFSF_DOWNLOAD_STREAM_MEM_THRESHOLD });
+        this.fs_context = fs_context;
+        this.file = file;
+        this.file_path = file_path;
+        this.start = start;
+        this.end = end;
+        this.stat = stat;
+        this.multi_buffer_pool = multi_buffer_pool;
+        this.signal = signal;
+        this.stats = stats;
+        this.stats_count_once = 1;
+        this.bucket = bucket;
+        this.namespace_resource_id = namespace_resource_id;
+        this.num_bytes = 0;
+        this.num_buffers = 0;
+        this.log2_size_histogram = {};
+    }
+
+    /**
+     * Readable stream implementation
+     * @param {number} size 
+     */
+    async _read(size) {
+        const buf = Buffer.allocUnsafe(size);
+        const nread = await this.read_buffer(buf, 0, buf.length, null);
+        if (nread === buf.length) {
+            this.push(buf);
+        } else if (nread > 0) {
+            this.push(buf.subarray(0, nread));
+        } else {
+            this.push(null);
+        }
+    }
+
+    /**
+     * @param {Buffer} buf
+     * @param {number} offset
+     * @param {number} length
+     * @param {number} file_pos
+     * @returns {Promise<number>}
+     */
+    async read_buffer(buf, offset, length, file_pos) {
+        this.signal.throwIfAborted();
+
+        await this._warmup_sparse_file(file_pos);
+        this.signal.throwIfAborted();
+
+        const bytesRead = await this.file.read(this.fs_context, buf, offset, length, file_pos);
+        if (bytesRead) this._update_stats(bytesRead);
+        return bytesRead;
+    }
+
+
+    /**
+     * Alternative implementation without using Readable stream API
+     * This allows to use a buffer pool to avoid creating new buffers.
+     * 
+     * The target_stream should be a Writable stream that will not use the buffer after the
+     * write callback, since we will release the buffer back to the pool in the callback.
+     * This means Transforms should not be used as target_stream.
+     * 
+     * @param {stream.Writable} target_stream 
+    */
+    async read_into_stream(target_stream) {
+        if (target_stream instanceof stream.Transform) {
+            throw new Error('FileReader read_into_stream must be called with a Writable stream, not a Transform stream');
+        }
+
+        let buffer_pool_cleanup = null;
+        let drain_promise = null;
+        const end = Math.min(this.stat.size, this.end);
+
+        try {
+
+            for (let pos = this.start; pos < end;) {
+                this.signal.throwIfAborted();
+
+                await this._warmup_sparse_file(pos);
+                this.signal.throwIfAborted();
+
+                // allocate or reuse buffer
+                // TODO buffers_pool and the underlying semaphore should support abort signal
+                // to avoid sleeping inside the semaphore until the timeout while the request is already aborted.
+                const remain_size = end - pos;
+                const { buffer, callback } = await this.multi_buffer_pool.get_buffers_pool(remain_size).get_buffer();
+                buffer_pool_cleanup = callback; // must be called ***IMMEDIATELY*** after get_buffer
+                this.signal.throwIfAborted();
+
+                // read from file
+                const read_size = Math.min(buffer.length, remain_size);
+                const bytesRead = await this.file.read(this.fs_context, buffer, 0, read_size, pos);
+                if (!bytesRead) {
+                    buffer_pool_cleanup = null;
+                    callback();
+                    break;
+                }
+                this.signal.throwIfAborted();
+
+                const data = buffer.subarray(0, bytesRead);
+                pos += bytesRead;
+                this._update_stats(bytesRead);
+
+                // wait for response buffer to drain before adding more data if needed -
+                // this occurs when the output network is slower than the input file
+                if (drain_promise) {
+                    await drain_promise;
+                    drain_promise = null;
+                    this.signal.throwIfAborted();
+                }
+
+                // write the data out to response
+                buffer_pool_cleanup = null; // cleanup is now in the socket responsibility
+                const write_ok = target_stream.write(data, null, callback);
+                if (!write_ok) {
+                    drain_promise = stream_utils.wait_drain(target_stream, { signal: this.signal });
+                    drain_promise.catch(() => undefined); // this avoids UnhandledPromiseRejection
+                }
+            }
+
+            // wait for the last drain if pending.
+            if (drain_promise) {
+                await drain_promise;
+                drain_promise = null;
+                this.signal.throwIfAborted();
+            }
+
+        } finally {
+            if (buffer_pool_cleanup) buffer_pool_cleanup();
+        }
+    }
+
+    /**
+     * @param {number} size 
+     */
+    _update_stats(size) {
+        this.num_bytes += size;
+        this.num_buffers += 1;
+        const log2_size = Math.ceil(Math.log2(size));
+        this.log2_size_histogram[log2_size] = (this.log2_size_histogram[log2_size] || 0) + 1;
+
+        // update stats collector but count the entire read operation just once
+        const count = this.stats_count_once;
+        this.stats_count_once = 0; // counting the entire operation just once
+        this.stats?.update_nsfs_write_stats({
+            namespace_resource_id: this.namespace_resource_id,
+            size,
+            count,
+            bucket_name: this.bucket,
+        });
+    }
+
+    /**
+     * @param {number} pos
+     */
+    async _warmup_sparse_file(pos) {
+        if (!config.NSFS_BUF_WARMUP_SPARSE_FILE_READS) return;
+        if (!native_fs_utils.is_sparse_file(this.stat)) return;
+        await native_fs_utils.warmup_sparse_file(this.fs_context, this.file, this.file_path, this.stat, pos);
+    }
+
+
+}
+
+
 
 class NewlineReaderFilePathEntry {
     constructor(fs_context, filepath) {
@@ -195,5 +409,6 @@ class NewlineReader {
     }
 }
 
+exports.FileReader = FileReader;
 exports.NewlineReader = NewlineReader;
 exports.NewlineReaderEntry = NewlineReaderFilePathEntry;
