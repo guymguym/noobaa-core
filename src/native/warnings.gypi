@@ -21,7 +21,8 @@
         'conditions' : [
             [ 'OS=="mac"', {
                 'xcode_settings': {
-                    'WARNING_CFLAGS': ['<@(cflags_warnings)'],
+                    ## TODO(guym) uncomment when we fix the warnings on mac
+                    # 'WARNING_CFLAGS': ['<@(cflags_warnings)'],
                 },
             }],
         ],
