@@ -1169,6 +1169,13 @@ config.VACCUM_ANALYZER_INTERVAL = 86400000;
 config.NOOBAA_METRICS_AUTH_ENABLED = process.env.NOOBAA_METRICS_AUTH_ENABLED === 'true';
 config.NOOBAA_VERSION_AUTH_ENABLED = process.env.NOOBAA_VERSION_AUTH_ENABLED === 'true';
 
+//////////////
+///  RDMA  ///
+//////////////
+
+config.RDMA_ENABLED = true; // TODO STILL EXPERIMENTAL - should be false by default
+
+
 /////////////////////
 //                 //
 //    OVERRIDES    //

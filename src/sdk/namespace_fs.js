@@ -14,6 +14,7 @@ const dbg = require('../util/debug_module')(__filename);
 const config = require('../../config');
 const crypto = require('crypto');
 const s3_utils = require('../endpoint/s3/s3_utils');
+const rdma_utils = require('../util/rdma_utils');
 const error_utils = require('../util/error_utils');
 const buffer_utils = require('../util/buffer_utils');
 const size_utils = require('../util/size_utils');
@@ -29,6 +30,10 @@ const NoobaaEvent = require('../manage_nsfs/manage_nsfs_events_utils').NoobaaEve
 const { PersistentLogger } = require('../util/persistent_logger');
 const { Glacier } = require('./glacier');
 const { FileReader } = require('../util/file_reader');
+const Speedometer = require('../util/speedometer');
+
+const speedometer = new Speedometer({ name: 'NSFS READ' });
+speedometer.start_lite();
 
 const multi_buffer_pool = new buffer_utils.MultiSizeBuffersPool({
     sorted_buf_sizes: [
@@ -44,6 +49,11 @@ const multi_buffer_pool = new buffer_utils.MultiSizeBuffersPool({
         }, {
             size: config.NSFS_BUF_SIZE_L,
             sem_size: config.NSFS_BUF_POOL_MEM_LIMIT_L,
+            is_default: true, // use as default when size is not specified in the request
+        }, {
+            // TODO - this is a temporary solution to use larger buffers for rdma
+            size: 8 * config.NSFS_BUF_SIZE_L,
+            sem_size: config.NSFS_BUF_POOL_MEM_LIMIT_L / 2,
         },
     ],
     warning_timeout: config.NSFS_BUF_POOL_WARNING_TIMEOUT,
@@ -1131,9 +1141,23 @@ class NamespaceFS {
             });
 
             const start_time = process.hrtime.bigint();
+            if (params.rdma_info) {
+                const http_res = /** @type {nb.S3Response} */ (res);
+                if (!http_res.setHeader) throw new Error('read_object_stream: cannot rdma to non http response');
+                const size = await rdma_utils.read_file_to_rdma(
+                    params.rdma_info,
+                    file_reader,
+                    multi_buffer_pool,
+                    signal,
+                );
+                http_res.setHeader('Content-Length', 0);
+                rdma_utils.set_rdma_response_headers(null, http_res, params.rdma_info, { size });
+            } else {
             await file_reader.read_into_stream(res);
+            }
             res.end();
             const took_ms = Number(process.hrtime.bigint() - start_time) / 1e6;
+            speedometer.update(stat.size, took_ms);
 
             // Force evict only if the entire object is being read as part
             // of the same request
@@ -1201,16 +1225,17 @@ class NamespaceFS {
             await this._throw_if_storage_class_not_supported(params.storage_class);
 
             upload_params = await this._start_upload(fs_context, object_sdk, file_path, params, open_mode);
+            let upload_res;
             if (!params.copy_source || upload_params.copy_res === COPY_STATUS_ENUM.FALLBACK) {
                 // We are taking the buffer size closest to the sized upload
                 const bp = multi_buffer_pool.get_buffers_pool(params.size);
-                const upload_res = await bp.sem.surround_count(
+                upload_res = await bp.sem.surround_count(
                     bp.buf_size, async () => this._upload_stream(upload_params));
                 upload_params.digest = upload_res.digest;
             }
 
             const upload_info = await this._finish_upload(upload_params);
-            return upload_info;
+            return { ...upload_info, rdma_reply: upload_res?.rdma_reply };
         } catch (err) {
             this.run_update_issues_report(object_sdk, err);
             //filed to put object
@@ -1467,7 +1492,7 @@ class NamespaceFS {
         const is_gpfs = native_fs_utils._is_gpfs(fs_context);
         const is_dir_content = this._is_directory_content(latest_ver_path, key);
         let retries = config.NSFS_RENAME_RETRIES;
-        for (;;) {
+        for (; ;) {
             try {
                 let new_ver_info;
                 let latest_ver_info;
@@ -1603,6 +1628,7 @@ class NamespaceFS {
         const { copy_source } = params;
         const signal = object_sdk.abort_controller.signal;
         try {
+            let rdma_reply;
             const md5_enabled = this._is_force_md5_enabled(object_sdk);
             const file_writer = new FileWriter({
                 target_file,
@@ -1621,10 +1647,17 @@ class NamespaceFS {
                 await this.read_object_stream(copy_source, object_sdk, file_writer);
             } else if (params.source_params) {
                 await params.source_ns.read_object_stream(params.source_params, object_sdk, file_writer);
+            } else if (params.rdma_info) {
+                rdma_reply = await rdma_utils.write_file_from_rdma(
+                    params.rdma_info,
+                    file_writer,
+                    multi_buffer_pool,
+                    object_sdk.abort_controller.signal,
+                );
             } else {
                 await file_writer.write_entire_stream(params.source_stream, { signal });
             }
-            return { digest: file_writer.digest, total_bytes: file_writer.total_bytes };
+            return { digest: file_writer.digest, total_bytes: file_writer.total_bytes, rdma_reply };
         } catch (error) {
             dbg.error('_upload_stream had error: ', error);
             throw error;
@@ -1770,7 +1803,7 @@ class NamespaceFS {
 
             md_upload_params = { ...md_upload_params, offset, digest: upload_res.digest };
             const upload_info = await this._finish_upload(md_upload_params);
-            return upload_info;
+            return { ...upload_info, rdma_reply: upload_res.rdma_reply };
         } catch (err) {
             this.run_update_issues_report(object_sdk, err);
             throw native_fs_utils.translate_error_codes(err, native_fs_utils.entity_enum.OBJECT);
