@@ -14,8 +14,6 @@ async function wait_drain(writable, options) {
     return events.once(writable, 'drain', options);
 }
 
-const wait_finished = util.promisify(stream.finished);
-
 // get a stream that performs an operation on the given data and passes through the same data
 function get_tap_stream(func) {
     return new stream.Transform({
@@ -58,6 +56,5 @@ async function pipeline(streams, reuse_last_stream) {
 }
 
 exports.wait_drain = wait_drain;
-exports.wait_finished = wait_finished;
 exports.get_tap_stream = get_tap_stream;
 exports.pipeline = pipeline;
