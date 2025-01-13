@@ -17,7 +17,7 @@
     "preinstall": "if [ -d .git ]; then git config core.hooksPath .githooks; fi",
     "install": "echo install hook override to avoid npm default hook calling node-gyp",
     "build": "npm run build:native",
-    "build:native": "node-gyp configure && node-gyp build",
+    "build:native": "node-gyp configure build",
     "rebuild": "npm run clean:install && npm run clean:build && npm install && npm run build",
     "pkg": "pkg . --public --options unhandled-rejections=warn --compress Brotli",
     "---": "------------------------------------------------------------------",
