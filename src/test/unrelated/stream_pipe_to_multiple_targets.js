@@ -62,7 +62,7 @@ class WriteTarget extends stream.Writable {
      * @override
      * @param {Buffer} chunk
      * @param {String} encoding
-     * @param {Function} callback
+     * @param {() => void} callback
      */
     _write(chunk, encoding, callback) {
         console.log(`  - write ${this.name} - ${chunk.length} bytes`);
@@ -72,7 +72,7 @@ class WriteTarget extends stream.Writable {
 
     /**
      * @override
-     * @param {Function} callback
+     * @param {() => void} callback
      */
     _final(callback) {
         this.hash = this.hasher.digest('hex');
@@ -80,8 +80,6 @@ class WriteTarget extends stream.Writable {
         setImmediate(callback);
     }
 }
-
-const wait_finished = util.promisify(stream.finished);
 
 async function main() {
     try {
@@ -145,8 +143,8 @@ async function main() {
         }
 
         await Promise.allSettled([
-            wait_finished(hub),
-            wait_finished(cache),
+            stream.promises.finished(hub),
+            stream.promises.finished(cache),
         ]);
 
         if (cache.destroyed) {

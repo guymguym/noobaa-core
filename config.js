@@ -1114,7 +1114,7 @@ function _get_config_root() {
 function _set_nc_config_to_env() {
     const config_to_env = ['NOOBAA_LOG_LEVEL', 'UV_THREADPOOL_SIZE', 'GPFS_DL_PATH', 'NSFS_ENABLE_DYNAMIC_SUPPLEMENTAL_GROUPS'];
     Object.values(config_to_env).forEach(function(key) {
-        if (config[key] !== undefined) {
+        if (key in config && config[key] !== undefined) {
             process.env[key] = config[key];
         }
     });

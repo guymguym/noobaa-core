@@ -11,7 +11,6 @@ const semaphore = require('../util/semaphore');
 const ChunkCoder = require('../util/chunk_coder');
 const range_utils = require('../util/range_utils');
 const buffer_utils = require('../util/buffer_utils');
-const stream_utils = require('../util/stream_utils');
 const ChunkSplitter = require('../util/chunk_splitter');
 const CoalesceStream = require('../util/coalesce_stream');
 const system_store = require('../server/system_services/system_store').get_instance();
@@ -414,26 +413,26 @@ class ObjectIO {
         });
         coalescer.on('error', err1 => dbg.error('object_io._upload_stream_internal: error occured on stream Coalescer: ', err1));
 
-        // The uploader transformer takes chunks after processed by the coder and uploads them
+        // The uploader takes chunks after processed by the coder and uploads them
         // by doing allocate(md) + write(data) + finalize(md).
-        const uploader = new stream.Transform({
+        const uploader = new stream.Writable({
             objectMode: true,
-            allowHalfOpen: false,
             highWaterMark: 4,
-            transform: (chunks, encoding, callback) =>
+            write: (chunks, encoding, callback) =>
                 this._upload_chunks(params, complete_params, chunks, callback)
         });
         uploader.on('error', err1 => dbg.error('object_io._upload_stream_internal: error occured on stream Uploader: ', err1));
 
-        const transforms = [params.source_stream,
+        const transforms = [
+            params.source_stream,
             splitter,
             coder,
             coalescer,
             uploader,
         ];
 
-        await stream_utils.pipeline(transforms);
-        await stream_utils.wait_finished(uploader);
+        await stream.promises.pipeline(transforms);
+        await stream.promises.finished(uploader);
 
         if (splitter.md5) complete_params.md5_b64 = splitter.md5.toString('base64');
         if (splitter.sha256) complete_params.sha256_b64 = splitter.sha256.toString('base64');

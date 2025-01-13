@@ -2,7 +2,6 @@
 'use strict';
 
 const _ = require('lodash');
-
 const dbg = require('../../util/debug_module')(__filename);
 const S3Error = require('./s3_errors').S3Error;
 const http_utils = require('../../util/http_utils');
@@ -12,6 +11,8 @@ const crypto = require('crypto');
 const config = require('../../.././config');
 const ChunkedContentDecoder = require('../../util/chunked_content_decoder');
 const stream_utils = require('../../util/stream_utils');
+
+const { hdr_as_str } = http_utils;
 
 /** @type {nb.StorageClass} */
 const STORAGE_CLASS_STANDARD = 'STANDARD';
@@ -41,14 +42,14 @@ const X_NOOBAA_AVAILABLE_STORAGE_CLASSES = 'x-noobaa-available-storage-classes';
 const OBJECT_ATTRIBUTES = Object.freeze(['ETag', 'Checksum', 'ObjectParts', 'StorageClass', 'ObjectSize']);
 const OBJECT_ATTRIBUTES_UNSUPPORTED = Object.freeze(['Checksum', 'ObjectParts']);
 
- /**
- * get_default_object_owner returns bucket_owner info if exists
- * else it'll return the default owner
- * @param {string} bucket_name
- * @param {nb.ObjectSDK} object_sdk
- * @returns {Promise<object>}
- */
- async function get_default_object_owner(bucket_name, object_sdk) {
+/**
+* get_default_object_owner returns bucket_owner info if exists
+* else it'll return the default owner
+* @param {string} bucket_name
+* @param {nb.ObjectSDK} object_sdk
+* @returns {Promise<object>}
+*/
+async function get_default_object_owner(bucket_name, object_sdk) {
     const info = await object_sdk.read_bucket_sdk_config_info(bucket_name);
     if (info) {
         if (info.bucket_info && info.bucket_info.owner_account) {
@@ -64,13 +65,13 @@ const OBJECT_ATTRIBUTES_UNSUPPORTED = Object.freeze(['Checksum', 'ObjectParts'])
         }
     }
     return DEFAULT_S3_USER;
- }
+}
 
- /**
- * get_object_owner returns object owner if obj.object_owner defined
- * @param {nb.ObjectInfo} obj
- * @returns {Object}
- */
+/**
+* get_object_owner returns object owner if obj.object_owner defined
+* @param {nb.ObjectInfo} obj
+* @returns {Object}
+*/
 function get_object_owner(obj) {
     if (obj.object_owner) {
         return Object.freeze({
@@ -102,6 +103,9 @@ function format_s3_xml_date(input) {
 
 const X_AMZ_META = 'x-amz-meta-';
 
+/**
+ * @param {nb.S3Request} req
+ */
 function get_request_xattr(req) {
     const xattr = {};
     _.each(req.headers, (val, hdr) => {
@@ -113,6 +117,9 @@ function get_request_xattr(req) {
     return xattr;
 }
 
+/**
+ * @param {nb.S3Response} res
+ */
 function set_response_xattr(res, xattr) {
     let size_for_md_left = config.S3_MD_SIZE_LIMIT;
     const keys = Object.keys(xattr);
@@ -154,6 +161,9 @@ function parse_etag(etag, err) {
     return etag;
 }
 
+/**
+ * @param {nb.S3Request} req
+ */
 function parse_encryption(req, copy_source) {
     if (copy_source) return parse_sse_c(req, copy_source);
     const sse = parse_sse(req);
@@ -164,10 +174,13 @@ function parse_encryption(req, copy_source) {
     return parse_sse_c(req);
 }
 
+/**
+ * @param {nb.S3Request} req 
+ */
 function parse_sse_c(req, copy_source) {
-    const algorithm = req.headers[`x-amz-${copy_source ? 'copy-source-' : ''}server-side-encryption-customer-algorithm`];
-    const key_b64 = req.headers[`x-amz-${copy_source ? 'copy-source-' : ''}server-side-encryption-customer-key`];
-    const key_md5_b64 = req.headers[`x-amz-${copy_source ? 'copy-source-' : ''}server-side-encryption-customer-key-md5`];
+    const algorithm = hdr_as_str(req.headers, `x-amz-${copy_source ? 'copy-source-' : ''}server-side-encryption-customer-algorithm`);
+    const key_b64 = hdr_as_str(req.headers, `x-amz-${copy_source ? 'copy-source-' : ''}server-side-encryption-customer-key`);
+    const key_md5_b64 = hdr_as_str(req.headers, `x-amz-${copy_source ? 'copy-source-' : ''}server-side-encryption-customer-key-md5`);
 
     if (!algorithm) {
         if (key_b64 || key_md5_b64) {
@@ -194,10 +207,13 @@ function parse_sse_c(req, copy_source) {
     };
 }
 
+/**
+ * @param {nb.S3Request} req
+ */
 function parse_sse(req) {
-    const algorithm = req.headers['x-amz-server-side-encryption'];
-    const kms_key_id = req.headers['x-amz-server-side-encryption-aws-kms-key-id'];
-    const context_b64 = algorithm === 'aws:kms' ? req.headers['x-amz-server-side-encryption-context'] : undefined;
+    const algorithm = hdr_as_str(req.headers, 'x-amz-server-side-encryption');
+    const kms_key_id = hdr_as_str(req.headers, 'x-amz-server-side-encryption-aws-kms-key-id');
+    const context_b64 = algorithm === 'aws:kms' ? hdr_as_str(req.headers, 'x-amz-server-side-encryption-context') : undefined;
 
     if (!algorithm) {
         if (kms_key_id) {
@@ -232,6 +248,10 @@ function parse_part_number(num_str, err) {
     return num;
 }
 
+/**
+ * @param {nb.S3Request} req
+ * @param {nb.S3Response} res
+ */
 function set_encryption_response_headers(req, res, encryption = {}) {
     const { algorithm, kms_key_id, key_md5_b64, } = encryption;
     const encryption_headers = [
@@ -256,13 +276,16 @@ function set_encryption_response_headers(req, res, encryption = {}) {
     if (kms_key_id) res.setHeader('x-amz-server-side-encryption-aws-kms-key-id', kms_key_id);
 }
 
+/**
+ * @param {nb.S3Request} req
+ */
 function parse_copy_source(req) {
-    const source_url = req.headers['x-amz-copy-source'];
+    const source_url = hdr_as_str(req.headers, 'x-amz-copy-source');
     if (!source_url) return;
     // I wonder: do we want to support copy source url with host:port too?
     const { query, bucket, key } = endpoint_utils.parse_source_url(source_url);
     const version_id = query && query.versionId;
-    const ranges = http_utils.parse_http_ranges(req.headers['x-amz-copy-source-range']);
+    const ranges = http_utils.parse_http_ranges(hdr_as_str(req.headers, 'x-amz-copy-source-range'));
     const encryption = parse_encryption(req, /* copy_source */ true);
     return { bucket, key, version_id, ranges, encryption };
 }
@@ -302,7 +325,7 @@ function set_response_object_md(res, object_md) {
         }
         if (object_md.lock_settings.retention) {
             res.setHeader('x-amz-object-lock-mode', object_md.lock_settings.retention.mode);
-            res.setHeader('x-amz-object-lock-retain-until-date', object_md.lock_settings.retention.retain_until_date);
+            res.setHeader('x-amz-object-lock-retain-until-date', object_md.lock_settings.retention.retain_until_date.toISOString());
         }
     }
     if (object_md.version_id) res.setHeader('x-amz-version-id', object_md.version_id);
@@ -362,7 +385,7 @@ function set_response_supported_storage_classes(res, supported_storage_classes =
  * @returns {nb.StorageClass}
  */
 function parse_storage_class_header(req) {
-    const header = /** @type {string} */ (req.headers['x-amz-storage-class']);
+    const header = hdr_as_str(req.headers, 'x-amz-storage-class');
     return parse_storage_class(header);
 }
 
@@ -424,11 +447,15 @@ function _is_valid_legal_hold(legal_hold) {
     return legal_hold === 'ON' || legal_hold === 'OFF';
 }
 
+/**
+ * @param {nb.S3Request} req
+ */
 function parse_lock_header(req) {
     const lock_settings = {};
-    const status = req.headers['x-amz-object-lock-legal-hold'];
-    const mode = req.headers['x-amz-object-lock-mode'];
-    const retain_until_date = req.headers['x-amz-object-lock-retain-until-date'] && new Date(req.headers['x-amz-object-lock-retain-until-date']);
+    const status = hdr_as_str(req.headers, 'x-amz-object-lock-legal-hold');
+    const mode = hdr_as_str(req.headers, 'x-amz-object-lock-mode');
+    const retain_until_header = hdr_as_str(req.headers, 'x-amz-object-lock-retain-until-date');
+    const retain_until_date = retain_until_header && new Date(retain_until_header);
 
     if (!status && !retain_until_date && !mode) return;
 
@@ -449,8 +476,11 @@ function parse_lock_header(req) {
     return lock_settings;
 }
 
+/**
+ * @param {nb.S3Request} req
+ */
 function parse_tagging_header(req) {
-    const tagging_header = req.headers['x-amz-tagging'];
+    const tagging_header = hdr_as_str(req.headers, 'x-amz-tagging');
     if (!tagging_header) return;
     let tagging_params;
     try {
@@ -470,28 +500,32 @@ function parse_tagging_header(req) {
     return Array.from(tag_map.values());
 }
 
-/*
-Specifies whether the object tags are copied from the source object or replaced with tags provided in the request.
-If the tags are copied, the tagset remains unchanged.
-If the tags are replaced, all of the original tagset is replaced by the tags you specify.
-If you don't specify a tagging directive, Amazon S3 copies tags by default.
-If the tagging directive is REPLACE, you specify any tags in url format in the x-amz-tagging header, similar to using a PUT object with tags.
-If the tagging directive is REPLACE, but you don't specify the x-amz-tagging in the request, the destination object won't have tags.
-Type: String
-Default: COPY
-Valid values: COPY | REPLACE
-Constraints: Values other than COPY or REPLACE result in an immediate 400-based error response.
-*/
+/**
+ * Specifies whether the object tags are copied from the source object or replaced with tags provided in the request.
+ * If the tags are copied, the tagset remains unchanged.
+ * If the tags are replaced, all of the original tagset is replaced by the tags you specify.
+ * If you don't specify a tagging directive, Amazon S3 copies tags by default.
+ * If the tagging directive is REPLACE, you specify any tags in url format in the x-amz-tagging header, similar to using a PUT object with tags.
+ * If the tagging directive is REPLACE, but you don't specify the x-amz-tagging in the request, the destination object won't have tags.
+ * Type: String
+ * Default: COPY
+ * Valid values: COPY | REPLACE
+ * Constraints: Values other than COPY or REPLACE result in an immediate 400-based error response.
+ * @param {nb.S3Request} req
+ */
 function is_copy_tagging_directive(req) {
     const allowed_values = ['COPY', 'REPLACE'];
-    const tagging_directive = req.headers['x-amz-tagging-directive'];
+    const tagging_directive = hdr_as_str(req.headers, 'x-amz-tagging-directive');
     if (!tagging_directive) return true;
     if (!allowed_values.includes(tagging_directive)) throw new S3Error(S3Error.InvalidArgument);
     if (tagging_directive === 'COPY') return true;
     return false;
 }
 
-// Source: https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketPUTencryption.html
+/**
+ * Source: https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketPUTencryption.html
+ * @param {nb.S3Request} req
+ */
 function parse_body_encryption_xml(req) {
     const valid_algo_values = ['AES256', 'aws:kms'];
     const sse_conf = req.body.ServerSideEncryptionConfiguration;
@@ -512,6 +546,9 @@ function parse_body_encryption_xml(req) {
     };
 }
 
+/**
+ * @param {nb.S3Request} req
+ */
 function parse_body_object_lock_conf_xml(req) {
     const configuration = req.body.ObjectLockConfiguration;
     const retention = configuration.Rule[0].DefaultRetention[0];
@@ -545,6 +582,9 @@ function parse_body_object_lock_conf_xml(req) {
     return conf;
 }
 
+/**
+ * @param {nb.S3Request} req
+ */
 function parse_body_website_xml(req) {
     const website = {
         website_configuration: {}
@@ -642,6 +682,9 @@ function parse_website_to_body(website) {
     return reply;
 }
 
+/**
+ * @param {nb.S3Request} req
+ */
 function parse_body_logging_xml(req) {
     const logging = {};
     const bucket_logging_status = req.body.BucketLoggingStatus;
@@ -650,7 +693,7 @@ function parse_body_logging_xml(req) {
     if (target?.length > 0) {
         if (target[0].TargetGrants) throw new S3Error(S3Error.AccessControlListNotSupported);
         if (!target[0].TargetPrefix) {
-            throw new S3Error({...S3Error.InvalidArgument, message: 'Log prefix is not provided'});
+            throw new S3Error({ ...S3Error.InvalidArgument, message: 'Log prefix is not provided' });
         }
         logging.log_bucket = target[0].TargetBucket[0];
         logging.log_prefix = target[0].TargetPrefix[0];
@@ -658,18 +701,31 @@ function parse_body_logging_xml(req) {
     return logging;
 }
 
-function get_http_response_date(res) {
-    const r = get_http_response_from_resp(res);
+/**
+ * Takes an AWS SDK response object and returns its date header
+ * @template T
+ * @param {import('aws-sdk/lib/request').PromiseResult<T,AWS.AWSError>} aws_sdk_res
+ */
+function get_http_response_date(aws_sdk_res) {
+    const r = get_http_response_from_aws_sdk_res(aws_sdk_res);
     if (!r.httpResponse.headers.date) throw new Error("date not found in response header");
     return r.httpResponse.headers.date;
 }
 
-function get_http_response_from_resp(res) {
-    const r = res.$response;
+/**
+ * @template T
+ * @param {import('aws-sdk/lib/request').PromiseResult<T,AWS.AWSError>} aws_sdk_res
+ * @returns {AWS.Response}
+ */
+function get_http_response_from_aws_sdk_res(aws_sdk_res) {
+    const r = aws_sdk_res.$response;
     if (!r) throw new Error("no $response in s3 returned object");
     return r;
 }
 
+/**
+ * @param {nb.S3Request} req
+ */
 function get_response_field_encoder(req) {
     const encoding_type = req.query['encoding-type'];
     if ((typeof encoding_type === 'undefined') || (encoding_type === null)) return response_field_encoder_none;
@@ -718,8 +774,7 @@ function parse_version_id(version_id, empty_err = S3Error.InvalidArgumentEmptyVe
 }
 
 /**
- * 
- * @param {*} req 
+ * @param {nb.S3Request} req 
  * @returns {number}
  */
 function parse_restore_request_days(req) {
@@ -738,8 +793,8 @@ function parse_restore_request_days(req) {
         if (config.S3_RESTORE_REQUEST_MAX_DAYS_BEHAVIOUR === 'DENY') {
             throw new S3Error({
                 ...S3Error.InvalidArgument,
-                detail: `Restore request days ${days} is above max ${config.S3_RESTORE_REQUEST_MAX_DAYS}`},
-            );
+                detail: `Restore request days ${days} is above max ${config.S3_RESTORE_REQUEST_MAX_DAYS}`
+            });
         }
 
         dbg.log0(`Restore request days ${days} is above max ${config.S3_RESTORE_REQUEST_MAX_DAYS} - truncating`);
@@ -803,6 +858,7 @@ function verify_string_byte_length(key, max_length) {
     return Buffer.byteLength(key, 'utf8') <= max_length;
 }
 
+
 exports.STORAGE_CLASS_STANDARD = STORAGE_CLASS_STANDARD;
 exports.STORAGE_CLASS_GLACIER = STORAGE_CLASS_GLACIER;
 exports.STORAGE_CLASS_GLACIER_IR = STORAGE_CLASS_GLACIER_IR;
@@ -833,7 +889,7 @@ exports.parse_lock_header = parse_lock_header;
 exports.parse_body_object_lock_conf_xml = parse_body_object_lock_conf_xml;
 exports.parse_to_camel_case = parse_to_camel_case;
 exports._is_valid_retention = _is_valid_retention;
-exports.get_http_response_from_resp = get_http_response_from_resp;
+exports.get_http_response_from_aws_sdk_res = get_http_response_from_aws_sdk_res;
 exports.get_http_response_date = get_http_response_date;
 exports.XATTR_SORT_SYMBOL = XATTR_SORT_SYMBOL;
 exports.get_response_field_encoder = get_response_field_encoder;

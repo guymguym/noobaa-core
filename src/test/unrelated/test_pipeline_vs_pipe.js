@@ -4,10 +4,8 @@
 const util = require('util');
 const stream = require('stream');
 const assert = require('assert');
+const { setTimeout: delay } = require('timers/promises');
 
-const finished_async = util.promisify(stream.finished);
-const pipeline_async = util.promisify(stream.pipeline);
-const delay_async = util.promisify(setTimeout);
 const inspect_readable_state = readable => util.inspect(readable._readableState, {
     breakLength: Infinity,
     colors: true,
@@ -25,7 +23,7 @@ async function test_pipe(use_pipeline) {
 
     const source = new stream.Readable({
         async read() {
-            await delay_async(TICK);
+            await delay(TICK);
             if (n_read < N_READ_MAX) {
                 console.log('source:', n_read);
                 const data = Buffer.allocUnsafe(4);
@@ -45,7 +43,7 @@ async function test_pipe(use_pipeline) {
 
     const decoder = new stream.Transform({
         async transform(data, enc, callback) {
-            await delay_async(TICK);
+            await delay(TICK);
             console.log('decoder:', n_decode);
             const n = data.readInt32BE(0);
             assert.strictEqual(n, n_decode);
@@ -63,7 +61,7 @@ async function test_pipe(use_pipeline) {
 
     const target = new stream.Writable({
         async write(data, enc, callback) {
-            await delay_async(TICK);
+            await delay(TICK);
             return callback();
         },
         destroy(err, callback) {
@@ -74,7 +72,7 @@ async function test_pipe(use_pipeline) {
 
     try {
         if (use_pipeline) {
-            await pipeline_async(
+            await stream.promises.pipeline(
                 source,
                 decoder,
                 target
@@ -83,9 +81,9 @@ async function test_pipe(use_pipeline) {
             source.pipe(decoder).pipe(target);
             console.error('main: waiting streams to finish ...');
             await Promise.all([
-                finished_async(source),
-                finished_async(decoder),
-                finished_async(target),
+                stream.promises.finished(source),
+                stream.promises.finished(decoder),
+                stream.promises.finished(target),
             ]);
         }
     } catch (err) {
@@ -99,7 +97,7 @@ async function test_pipe(use_pipeline) {
         } else {
             console.error('main: source is still reading ...');
         }
-        await delay_async(1000);
+        await delay(1000);
     }
 }
 

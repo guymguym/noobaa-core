@@ -14,7 +14,6 @@ const RandStream = require('../../util/rand_stream');
 const ChunkCoder = require('../../util/chunk_coder');
 const ChunkEraser = require('../../util/chunk_eraser');
 const Speedometer = require('../../util/speedometer');
-const stream_utils = require('../../util/stream_utils');
 const FlattenStream = require('../../util/flatten_stream');
 const ChunkSplitter = require('../../util/chunk_splitter');
 
@@ -285,28 +284,30 @@ async function test_stream({ erase, decode, generator, input_size, chunk_split_c
             coder: 'dec',
         });
 
-        const reporter = new stream.Transform({
+        const reporter_state = { pos: 0, count: 0 };
+        const reporter = new stream.Writable({
             objectMode: true,
-            allowHalfOpen: false,
             highWaterMark: 50,
-            transform(chunk, encoding, callback) {
-                this.count = (this.count || 0) + 1;
-                this.pos = this.pos || 0;
+            write(chunk, encoding, callback) {
+                reporter_state.count = (reporter_state.count || 0) + 1;
+                reporter_state.pos = reporter_state.pos || 0;
                 // checking the position is continuous
-                assert.strictEqual(this.pos, chunk.pos);
-                this.pos += chunk.size;
+                assert.strictEqual(reporter_state.pos, chunk.pos);
+                reporter_state.pos += chunk.size;
                 speedometer.update(chunk.size);
                 callback();
             },
-            flush(callback) {
+            final(callback) {
                 speedometer.clear_interval();
                 // speedometer.report();
-                // console.log('AVERAGE CHUNK SIZE', (this.pos / this.count).toFixed(0));
+                // console.log('AVERAGE CHUNK SIZE', (reporter_state.pos / reporter_state.count).toFixed(0));
                 callback();
             }
         });
 
-        const transforms = [input,
+        /** @type {(stream.Readable | stream.Transform | stream.Writable)[]} */
+        const transforms = [
+            input,
             splitter,
             coder,
         ];
@@ -316,7 +317,8 @@ async function test_stream({ erase, decode, generator, input_size, chunk_split_c
             transforms.push(new FlattenStream());
         }
         transforms.push(reporter);
-        await stream_utils.pipeline(transforms);
+        await stream.promises.pipeline(transforms);
+        await stream.promises.finished(reporter);
     } catch (err) {
         throw_chunk_err(err);
     }
