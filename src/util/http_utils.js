@@ -13,7 +13,6 @@ const xml2js = require('xml2js');
 const querystring = require('querystring');
 const { HttpProxyAgent } = require('http-proxy-agent');
 const { HttpsProxyAgent } = require('https-proxy-agent');
-const S3Error = require('../endpoint/s3/s3_errors').S3Error;
 
 const dbg = require('./debug_module')(__filename);
 const config = require('../../config');
@@ -23,6 +22,8 @@ const net_utils = require('./net_utils');
 const time_utils = require('./time_utils');
 const cloud_utils = require('./cloud_utils');
 const ssl_utils = require('../util/ssl_utils');
+const RpcError = require('../rpc/rpc_error');
+const S3Error = require('../endpoint/s3/s3_errors').S3Error;
 
 const UNSIGNED_PAYLOAD = 'UNSIGNED-PAYLOAD';
 const STREAMING_PAYLOAD = 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD';
@@ -121,6 +122,63 @@ function get_md_conditions(req, prefix) {
         cond.if_none_match_etag = req.headers[prefix + 'if-none-match'];
     }
     return cond;
+}
+
+/**
+ * @param {MDConditions} [conditions]
+ * @param {{
+*   etag?: string,
+*   last_modified?: number,
+*   mtime?: Date,
+*   create_time?: Date,
+*   _id?: nb.ID,
+* }} [obj]
+*/
+function check_md_conditions(conditions, obj) {
+    if (!conditions) return;
+    if (!conditions.if_match_etag &&
+        !conditions.if_none_match_etag &&
+        !conditions.if_modified_since &&
+        !conditions.if_unmodified_since) return;
+
+    const data = {
+        conditions,
+        etag: obj?.etag || '',
+        last_modified:
+            obj?.last_modified ||
+            obj?.mtime?.getTime() ||
+            obj?.create_time?.getTime() ||
+            obj?._id?.getTimestamp()?.getTime() ||
+            0,
+    };
+
+    // See http://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectHEAD.html#req-header-consideration-1
+    // See https://tools.ietf.org/html/rfc7232 (HTTP Conditional Requests)
+    let matched = false;
+    let unmatched = false;
+
+    if (conditions.if_match_etag) {
+        if (!(obj && match_etag(conditions.if_match_etag, data.etag))) {
+            throw new RpcError('IF_MATCH_ETAG', 'check_md_conditions failed', data);
+        }
+        matched = true;
+    }
+    if (conditions.if_none_match_etag) {
+        if (obj && match_etag(conditions.if_none_match_etag, data.etag)) {
+            throw new RpcError('IF_NONE_MATCH_ETAG', 'check_md_conditions failed', data);
+        }
+        unmatched = true;
+    }
+    if (conditions.if_modified_since) {
+        if (!unmatched && (!obj || conditions.if_modified_since > data.last_modified)) {
+            throw new RpcError('IF_MODIFIED_SINCE', 'check_md_conditions failed', data);
+        }
+    }
+    if (conditions.if_unmodified_since) {
+        if (!matched && (!obj || conditions.if_unmodified_since < data.last_modified)) {
+            throw new RpcError('IF_UNMODIFIED_SINCE', 'check_md_conditions failed', data);
+        }
+    }
 }
 
 /**
@@ -854,6 +912,7 @@ function handle_server_error(err) {
 exports.parse_url_query = parse_url_query;
 exports.parse_client_ip = parse_client_ip;
 exports.get_md_conditions = get_md_conditions;
+exports.check_md_conditions = check_md_conditions;
 exports.match_etag = match_etag;
 exports.parse_http_ranges = parse_http_ranges;
 exports.format_http_ranges = format_http_ranges;
