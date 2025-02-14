@@ -481,7 +481,7 @@ S3Error.AccessControlListNotSupported = Object.freeze({
 /////////////////////////////////////
 S3Error.NotModified = Object.freeze({
     code: 'NotModified',
-    message: 'The resource was not modified according to the conditions in the provided headers.',
+    message: 'Not Modified',
     http_code: 304,
 });
 S3Error.BadRequest = Object.freeze({
