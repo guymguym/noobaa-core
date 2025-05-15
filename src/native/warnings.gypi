@@ -6,7 +6,8 @@
             '-Wall',
             '-Wextra',
             '-Werror',
-            '-Wpedantic',
+            # TODO GUYM - pedantic fails for gpfs_fcntl.h because ISO C++ forbids zero length arrays
+            #'-Wpedantic',
             '-Wno-unused-parameter',
             # Can be removed when https://github.com/nodejs/nan/issues/953 is resolved.
             '-Wno-error=deprecated-declarations',

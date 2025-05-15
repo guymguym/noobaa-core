@@ -4,23 +4,24 @@
 #include "../util/common.h"
 #include "../util/napi.h"
 #include "../util/os.h"
+#include "./gpfs.h"
 #include "./gpfs_fcntl.h"
 
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <pwd.h>
 #include <map>
 #include <math.h>
+#include <pwd.h>
 #include <stdlib.h>
 #include <sys/fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/xattr.h>
-#include <sys/file.h>
 #include <thread>
 #include <typeinfo>
 #include <unistd.h>
@@ -38,10 +39,10 @@
     #define ENOATTR ENODATA
 #endif
 
-#define ROUNDUP(X, Y) ((Y) * (((X) + (Y)-1) / (Y)))
+#define ROUNDUP(X, Y) ((Y) * (((X) + (Y) - 1) / (Y)))
 
-// Should total to 256 (sizeof(buffer) 212 + sizeof(header) 16 + sizeof(payload) 28)
-#define GPFS_XATTR_BUFFER_SIZE 212
+// Should total to 256 (sizeof(buffer) 216 + sizeof(header) 16 + sizeof(payload) 24)
+#define GPFS_XATTR_BUFFER_SIZE 216
 #define GPFS_BACKEND "GPFS"
 #define GPFS_XATTR_PREFIX "gpfs"
 #define GPFS_DOT_ENCRYPTION_EA "Encryption"
@@ -151,10 +152,10 @@
 #endif
 
 #ifdef __APPLE__
-    typedef unsigned long long DirOffset;
+typedef unsigned long long DirOffset;
     #define DIR_OFFSET_FIELD d_seekoff
 #else
-    typedef long DirOffset;
+typedef long DirOffset;
     #define DIR_OFFSET_FIELD d_off
 #endif
 
@@ -181,7 +182,19 @@ static int (*dlsym_gpfs_unlinkat)(
     gpfs_file_t fileDesc, const char* path, gpfs_file_t fd) = 0;
 
 static int (*dlsym_gpfs_ganesha)(
-    int op, void *oarg) = 0;
+    int op, void* oarg) = 0;
+
+static gpfs_ssize64_t (*dlsym_gpfs_rdma_pread)(
+    gpfs_file_t fd,
+    gpfs_size64_t count,
+    gpfs_off64_t offset,
+    const gpfs_rdma_info_t* gpfs_rdma_info) = 0;
+
+static gpfs_ssize64_t (*dlsym_gpfs_rdma_pwrite)(
+    gpfs_file_t fd,
+    gpfs_size64_t count,
+    gpfs_off64_t offset,
+    const gpfs_rdma_info_t* gpfs_rdma_info) = 0;
 
 struct gpfs_ganesha_noobaa_arg
 {
@@ -474,7 +487,7 @@ get_fd_xattr(int fd, XattrMap& xattr, const std::vector<std::string>& xattr_keys
 static int
 get_fd_gpfs_xattr(int fd, XattrMap& xattr, int& gpfs_error, bool use_dmapi)
 {
-    auto gpfs_xattrs { GPFS_XATTRS };
+    auto gpfs_xattrs{ GPFS_XATTRS };
     if (use_dmapi) {
         gpfs_xattrs.insert(gpfs_xattrs.end(), GPFS_DMAPI_XATTRS.begin(), GPFS_DMAPI_XATTRS.end());
     }
@@ -554,13 +567,14 @@ load_xattr_get_keys(Napi::Object& options, std::vector<std::string>& _xattr_get_
 }
 
 /**
-* converts Napi::Array of numbers to std::vector
-* typename T - type of the vector to convert to (e.g int, uint, gid_t)
-* warning: function will only work on vector with numeric types. should not be used with other types
-*/
-template<typename T>
+ * converts Napi::Array of numbers to std::vector
+ * typename T - type of the vector to convert to (e.g int, uint, gid_t)
+ * warning: function will only work on vector with numeric types. should not be used with other types
+ */
+template <typename T>
 static std::vector<T>
-convert_napi_number_array_to_number_vector(const Napi::Array& arr) {
+convert_napi_number_array_to_number_vector(const Napi::Array& arr)
+{
     std::vector<T> new_vector;
     const std::size_t arr_length = arr.Length();
     for (std::size_t i = 0; i < arr_length; ++i) {
@@ -572,20 +586,22 @@ convert_napi_number_array_to_number_vector(const Napi::Array& arr) {
 /**
  * converts std::vector to comma seperated string so it can be printed to logs
  */
-template<typename T>
+template <typename T>
 static std::string
-stringfy_vector(std::vector<T>& vec) {
+stringfy_vector(std::vector<T>& vec)
+{
     std::stringstream ss;
     std::size_t size = vec.size();
-    for(std::size_t i = 0; i < size; ++i) {
+    for (std::size_t i = 0; i < size; ++i) {
         if (i > 0) ss << ',';
         ss << vec[i];
     }
     return ss.str();
 }
 
-
-static std::string get_groups_as_string() {
+static std::string
+get_groups_as_string()
+{
     std::vector<gid_t> groups = ThreadScope::get_process_groups();
     return stringfy_vector(groups);
 }
@@ -673,7 +689,7 @@ struct FSWorker : public Napi::AsyncWorker
         std::string new_supplemental_groups = get_groups_as_string();
         DBG1("FS::FSWorker::Execute: " << _desc << DVAL(_uid) << DVAL(_gid) << DVAL(geteuid()) << DVAL(getegid()) << DVAL(getuid()) << DVAL(getgid()) << DVAL(new_supplemental_groups));
 
-        if(_should_add_thread_capabilities) {
+        if (_should_add_thread_capabilities) {
             tx.add_thread_capabilities();
         }
         auto start_time = std::chrono::high_resolution_clock::now();
@@ -710,7 +726,8 @@ struct FSWorker : public Napi::AsyncWorker
     {
         return gpfs_dl_path != NULL && gpfs_lib_file_exists > -1 && _backend == GPFS_BACKEND;
     }
-    void AddThreadCapabilities() {
+    void AddThreadCapabilities()
+    {
         _should_add_thread_capabilities = true;
     }
     virtual void OnOK() override
@@ -772,7 +789,7 @@ struct FSWrapWorker : public FSWorker
 
 /**
  * Stat is an fs op
- * 
+ *
  * Note: this stat operation contains the system call of open.
  *       Currently, we use it in list objects, but might want to create a different stat call
  *       (or add changes inside this) to avoid permission check during list objects
@@ -1277,7 +1294,7 @@ struct Readfile : public FSWorker
     }
     virtual void OnOK()
     {
-        DBG1("FS::FSWorker::OnOK: Readfile " << DVAL(_path));
+        DBG1("FS::Readfile::OnOK: " << DVAL(_path));
         Napi::Env env = Env();
 
         auto res_stat = Napi::Object::New(env);
@@ -1346,7 +1363,7 @@ struct Readdir : public FSWorker
     }
     virtual void OnOK()
     {
-        DBG1("FS::FSWorker::OnOK: Readdir " << DVAL(_path));
+        DBG1("FS::Readdir::OnOK: " << DVAL(_path));
         Napi::Env env = Env();
         Napi::Array res = Napi::Array::New(env, _entries.size());
         int index = 0;
@@ -1398,7 +1415,7 @@ struct GetPwName : public FSWorker
 {
     std::string _user;
     struct passwd _pwd;
-    struct passwd *_getpwnam_res;
+    struct passwd* _getpwnam_res;
     std::unique_ptr<char[]> _buf;
     GetPwName(const Napi::CallbackInfo& info)
         : FSWorker(info)
@@ -1448,6 +1465,8 @@ struct FileWrap : public Napi::ObjectWrap<FileWrap>
                 InstanceMethod<&FileWrap::read>("read"),
                 InstanceMethod<&FileWrap::write>("write"),
                 InstanceMethod<&FileWrap::writev>("writev"),
+                InstanceMethod<&FileWrap::read_rdma>("read_rdma"),
+                InstanceMethod<&FileWrap::write_rdma>("write_rdma"),
                 InstanceMethod<&FileWrap::replacexattr>("replacexattr"),
                 InstanceMethod<&FileWrap::linkfileat>("linkfileat"),
                 InstanceMethod<&FileWrap::unlinkfileat>("unlinkfileat"),
@@ -1477,6 +1496,8 @@ struct FileWrap : public Napi::ObjectWrap<FileWrap>
     Napi::Value read(const Napi::CallbackInfo& info);
     Napi::Value write(const Napi::CallbackInfo& info);
     Napi::Value writev(const Napi::CallbackInfo& info);
+    Napi::Value read_rdma(const Napi::CallbackInfo& info);
+    Napi::Value write_rdma(const Napi::CallbackInfo& info);
     Napi::Value replacexattr(const Napi::CallbackInfo& info);
     Napi::Value linkfileat(const Napi::CallbackInfo& info);
     Napi::Value unlinkfileat(const Napi::CallbackInfo& info);
@@ -1581,7 +1602,7 @@ struct FileRead : public FSWrapWorker<FileWrap>
     }
     virtual void OnOK()
     {
-        DBG1("FS::FSWorker::OnOK: FileRead " << DVAL(_wrap->_path));
+        DBG1("FS::FileRead::OnOK: " << DVAL(_wrap->_path));
         Napi::Env env = Env();
         _deferred.Resolve(Napi::Number::New(env, _br));
         ReportWorkerStats(0);
@@ -1671,6 +1692,116 @@ struct FileWritev : public FSWrapWorker<FileWrap>
     }
 };
 
+static bool
+get_gpfs_rdma_info_from_desc(std::string desc, gpfs_rdma_info_t& info)
+{
+    memset(&info, 0, sizeof info);
+    uint32_t rem_size = 0;
+    uint32_t global_id = 0;
+    int n = sscanf(desc.c_str(),
+        "%016llx:%08x:%08x:%04hx:%06x:%01x:%016llx%016llx",
+        &info.rdma_info_dc.rem_vaddr,
+        &rem_size,
+        &info.rdma_info_dc.rkey,
+        &info.rdma_info_dc.lid,
+        &info.rdma_info_dc.qp_num,
+        &global_id,
+        &info.rdma_info_dc.gid[0],
+        &info.rdma_info_dc.gid[1]);
+    info.gpfs_rdma_info_type = GPFS_RDMA_INFO_TYPE_DC;
+    info.rdma_info_dc.dc_key = 0xffeeddcc;
+    info.rdma_info_dc.fab_num = GPFS_RDMA_FABRIC_ANY;
+    return n == 8;
+}
+
+struct FileReadRdma : public FSWrapWorker<FileWrap>
+{
+    gpfs_size64_t _count;
+    gpfs_off64_t _offset;
+    gpfs_rdma_info_t _rdma_info;
+    gpfs_ssize64_t _result;
+    FileReadRdma(const Napi::CallbackInfo& info)
+        : FSWrapWorker<FileWrap>(info)
+        , _count(0)
+        , _offset(0)
+        , _result(-1)
+    {
+        if (!dlsym_gpfs_rdma_pread) {
+            auto err = Napi::Error::New(info.Env(), "gpfs_rdma_pread not found");
+            err.Set("code", "EOPNOTSUPP");
+            throw err;
+        }
+        _count = info[1].As<Napi::Number>().Int64Value();
+        _offset = info[2].As<Napi::Number>().Int64Value();
+        if (!get_gpfs_rdma_info_from_desc(info[3].As<Napi::String>().Utf8Value(), _rdma_info)) {
+            auto err = Napi::Error::New(info.Env(), "Invalid gpfs_rdma_info_t descriptor");
+            err.Set("code", "EINVAL");
+            throw err;
+        }
+        Begin(XSTR() << "FileReadRdma " << DVAL(_wrap->_path) << DVAL(_count) << DVAL(_offset));
+    }
+    virtual void Work()
+    {
+        int fd = _wrap->_fd;
+        CHECK_WRAP_FD(fd);
+        _result = dlsym_gpfs_rdma_pread(fd, _count, _offset, &_rdma_info);
+        if (_result < 0) {
+            SetSyscallError();
+            return;
+        }
+    }
+    virtual void OnOK()
+    {
+        DBG1("FS::FileReadRdma::OnOK: " << DVAL(_wrap->_path) << DVAL(_result));
+        _deferred.Resolve(Napi::Number::New(Env(), _result));
+        ReportWorkerStats(0);
+    }
+};
+
+struct FileWriteRdma : public FSWrapWorker<FileWrap>
+{
+    gpfs_size64_t _count;
+    gpfs_off64_t _offset;
+    gpfs_rdma_info_t _rdma_info;
+    gpfs_ssize64_t _result;
+    FileWriteRdma(const Napi::CallbackInfo& info)
+        : FSWrapWorker<FileWrap>(info)
+        , _count(0)
+        , _offset(0)
+        , _result(-1)
+    {
+        if (!dlsym_gpfs_rdma_pwrite) {
+            auto err = Napi::Error::New(info.Env(), "gpfs_rdma_pwrite not found");
+            err.Set("code", "EOPNOTSUPP");
+            throw err;
+        }
+        _count = info[1].As<Napi::Number>().Int64Value();
+        _offset = info[2].As<Napi::Number>().Int64Value();
+        if (!get_gpfs_rdma_info_from_desc(info[3].As<Napi::String>().Utf8Value(), _rdma_info)) {
+            auto err = Napi::Error::New(info.Env(), "Invalid gpfs_rdma_info_t descriptor");
+            err.Set("code", "EINVAL");
+            throw err;
+        }
+        Begin(XSTR() << "FileWriteRdma " << DVAL(_wrap->_path) << DVAL(_count) << DVAL(_offset));
+    }
+    virtual void Work()
+    {
+        int fd = _wrap->_fd;
+        CHECK_WRAP_FD(fd);
+        _result = dlsym_gpfs_rdma_pwrite(fd, _count, _offset, &_rdma_info);
+        if (_result < 0) {
+            SetSyscallError();
+            return;
+        }
+    }
+    virtual void OnOK()
+    {
+        DBG1("FS::FileWriteRdma::OnOK: " << DVAL(_wrap->_path) << DVAL(_result));
+        _deferred.Resolve(Napi::Number::New(Env(), _result));
+        ReportWorkerStats(0);
+    }
+};
+
 /**
  * TODO: Not atomic and might cause partial updates of MD
  */
@@ -1722,8 +1853,8 @@ struct LinkFileAt : public FSWrapWorker<FileWrap>
         if (info.Length() > 3 && !info[3].IsUndefined()) {
             _should_not_override = info[3].As<Napi::Boolean>();
         }
-        if(_replace_fd < 0  && _should_not_override) {
-            //set thread capabilities to allow linkat from user other than root.
+        if (_replace_fd < 0 && _should_not_override) {
+            // set thread capabilities to allow linkat from user other than root.
             AddThreadCapabilities();
         }
         Begin(XSTR() << "LinkFileAt " << DVAL(_wrap->_path) << DVAL(_wrap->_fd) << DVAL(_filepath) << DVAL(_should_not_override));
@@ -1737,7 +1868,7 @@ struct LinkFileAt : public FSWrapWorker<FileWrap>
         // Linux will fail the linkat() if the file already exist and we want to replace it if it existed.
         if (_replace_fd >= 0) {
             SYSCALL_OR_RETURN(dlsym_gpfs_linkatif(fd, "", AT_FDCWD, _filepath.c_str(), AT_EMPTY_PATH, _replace_fd));
-        } else if (_should_not_override){
+        } else if (_should_not_override) {
             SYSCALL_OR_RETURN(linkat(fd, "", AT_FDCWD, _filepath.c_str(), AT_EMPTY_PATH));
         } else {
             SYSCALL_OR_RETURN(dlsym_gpfs_linkat(fd, "", AT_FDCWD, _filepath.c_str(), AT_EMPTY_PATH));
@@ -1825,7 +1956,7 @@ struct FileFsync : public FSWrapWorker<FileWrap>
 
 struct FileFlock : public FSWrapWorker<FileWrap>
 {
-	int lock_mode;
+    int lock_mode;
     FileFlock(const Napi::CallbackInfo& info)
         : FSWrapWorker<FileWrap>(info)
         , lock_mode(LOCK_SH)
@@ -2000,6 +2131,18 @@ Napi::Value
 FileWrap::writev(const Napi::CallbackInfo& info)
 {
     return api<FileWritev>(info);
+}
+
+Napi::Value
+FileWrap::read_rdma(const Napi::CallbackInfo& info)
+{
+    return api<FileReadRdma>(info);
+}
+
+Napi::Value
+FileWrap::write_rdma(const Napi::CallbackInfo& info)
+{
+    return api<FileWriteRdma>(info);
 }
 
 Napi::Value
@@ -2288,7 +2431,7 @@ set_log_config(const Napi::CallbackInfo& info)
     bool syslog_enabled = info[1].As<Napi::Boolean>();
     LOG_TO_STDERR_ENABLED = stderr_enabled;
     LOG_TO_SYSLOG_ENABLED = syslog_enabled;
-    DBG1("FS::set_log_config: " <<  DVAL(LOG_TO_STDERR_ENABLED) << DVAL(LOG_TO_SYSLOG_ENABLED));
+    DBG1("FS::set_log_config: " << DVAL(LOG_TO_STDERR_ENABLED) << DVAL(LOG_TO_SYSLOG_ENABLED));
     return info.Env().Undefined();
 }
 
@@ -2308,7 +2451,7 @@ register_gpfs_noobaa(const Napi::CallbackInfo& info)
 
     if (dlsym_gpfs_ganesha(OPENHANDLE_REGISTER_NOOBAA, &args)) {
         if (errno == EOPNOTSUPP) {
-            LOG("Warning: register with libgpfs gpfs_ganesha returned EOPNOTSUPP" );
+            LOG("Warning: register with libgpfs gpfs_ganesha returned EOPNOTSUPP");
         } else {
             PANIC("Error: register with libgpfs gpfs_ganesha failed");
         }
@@ -2338,35 +2481,35 @@ fs_napi(Napi::Env env, Napi::Object exports)
     if (gpfs_dl_path != NULL) {
         LOG("FS::GPFS GPFS_DL_PATH=" << gpfs_dl_path);
         struct stat _stat_res;
-        gpfs_lib_file_exists = stat(gpfs_dl_path, &_stat_res); //SYSCALL_OR_RETURN
+        gpfs_lib_file_exists = stat(gpfs_dl_path, &_stat_res); // SYSCALL_OR_RETURN
         if (gpfs_lib_file_exists == -1) {
             LOG("FS::GPFS WARN couldn't find GPFS lib file GPFS_DL_PATH=" << gpfs_dl_path);
         } else {
             LOG("FS::GPFS found GPFS lib file GPFS_DL_PATH=" << gpfs_dl_path);
             uv_lib_t* lib = (uv_lib_t*)malloc(sizeof(uv_lib_t));
             if (uv_dlopen(gpfs_dl_path, lib)) {
-                PANIC("Error: %s\n"
-                    << uv_dlerror(lib));
+                PANIC("FS::GPFS Error: dlopen libgpfs failed " << DVAL(gpfs_dl_path) << uv_dlerror(lib));
             }
             if (uv_dlsym(lib, "gpfs_linkat", (void**)&dlsym_gpfs_linkat)) {
-                PANIC("Error: %s\n"
-                    << uv_dlerror(lib));
+                PANIC("FS::GPFS Error: dlsym gpfs_linkat failed " << uv_dlerror(lib));
             }
             if (uv_dlsym(lib, "gpfs_linkatif", (void**)&dlsym_gpfs_linkatif)) {
-                PANIC("Error: %s\n"
-                    << uv_dlerror(lib));
+                PANIC("FS::GPFS Error: dlsym gpfs_linkatif failed " << uv_dlerror(lib));
             }
             if (uv_dlsym(lib, "gpfs_unlinkat", (void**)&dlsym_gpfs_unlinkat)) {
-                PANIC("Error: %s\n"
-                    << uv_dlerror(lib));
+                PANIC("FS::GPFS Error: dlsym gpfs_unlinkat failed " << uv_dlerror(lib));
             }
             if (uv_dlsym(lib, "gpfs_fcntl", (void**)&dlsym_gpfs_fcntl)) {
-                PANIC("Error: %s\n"
-                    << uv_dlerror(lib));
+                PANIC("FS::GPFS Error: dlsym gpfs_fcntl failed " << uv_dlerror(lib));
             }
             if (uv_dlsym(lib, "gpfs_ganesha", (void**)&dlsym_gpfs_ganesha)) {
-                PANIC("Error: %s\n"
-                    << uv_dlerror(lib));
+                PANIC("FS::GPFS Error: dlsym gpfs_ganesha failed " << uv_dlerror(lib));
+            }
+            if (uv_dlsym(lib, "gpfs_rdma_pread", (void**)&dlsym_gpfs_rdma_pread)) {
+                LOG("FS::GPFS Error: dlsym gpfs_rdma_pread failed " << uv_dlerror(lib));
+            }
+            if (uv_dlsym(lib, "gpfs_rdma_pwrite", (void**)&dlsym_gpfs_rdma_pwrite)) {
+                LOG("FS::GPFS Error: dlsym gpfs_rdma_write failed " << uv_dlerror(lib));
             }
             if (sizeof(struct gpfsRequest_t) != 256) {
                 PANIC("The gpfs get extended attributes is of wrong size" << sizeof(struct gpfsRequest_t));
@@ -2374,6 +2517,9 @@ fs_napi(Napi::Env env, Napi::Object exports)
 
             auto gpfs = Napi::Object::New(env);
             gpfs["register_gpfs_noobaa"] = Napi::Function::New(env, register_gpfs_noobaa);
+            if (dlsym_gpfs_rdma_pread && dlsym_gpfs_rdma_pwrite) {
+                gpfs["rdma_enabled"] = Napi::Boolean::New(env, true);
+            }
             // we export the gpfs object, which can be checked to indicate that
             // gpfs lib was loaded and its api's can be used.
             exports_fs["gpfs"] = gpfs;
@@ -2401,7 +2547,7 @@ fs_napi(Napi::Env env, Napi::Object exports)
     exports_fs["realpath"] = Napi::Function::New(env, api<RealPath>);
     exports_fs["getsinglexattr"] = Napi::Function::New(env, api<GetSingleXattr>);
     exports_fs["getpwname"] = Napi::Function::New(env, api<GetPwName>);
-    exports_fs["symlink"]  = Napi::Function::New(env, api<Symlink>);
+    exports_fs["symlink"] = Napi::Function::New(env, api<Symlink>);
 
     FileWrap::init(env);
     exports_fs["open"] = Napi::Function::New(env, api<FileOpen>);
@@ -2417,7 +2563,6 @@ fs_napi(Napi::Env env, Napi::Object exports)
     exports_fs["PLATFORM_IOV_MAX"] = Napi::Number::New(env, IOV_MAX);
     ThreadScope::init_passwd_buf_size();
 
-
 #ifdef O_DIRECT
     exports_fs["O_DIRECT"] = Napi::Number::New(env, O_DIRECT);
 #endif
@@ -2430,7 +2575,6 @@ fs_napi(Napi::Env env, Napi::Object exports)
     exports_fs["set_log_config"] = Napi::Function::New(env, set_log_config);
 
     exports["fs"] = exports_fs;
-
 }
 
 } // namespace noobaa

@@ -45,6 +45,8 @@ struct RdmaServerNapi : public Napi::ObjectWrap<RdmaServerNapi>
     Napi::Value is_registered_buffer(const Napi::CallbackInfo& info);
     Napi::Value rdma(const Napi::CallbackInfo& info);
     Napi::Value rdma_async_event(const Napi::CallbackInfo& info);
+    void _start_async_events();
+    void _stop_async_events();
     void _handle_async_events();
 };
 
@@ -79,12 +81,6 @@ static inline int32_t asi32(Napi::Value v);
 static inline uint32_t asu32(Napi::Value v);
 static inline uint32_t asi64(Napi::Value v);
 static inline std::string asstr(Napi::Value v);
-
-static void
-_uv_handle_async_events(uv_prepare_t* handle)
-{
-    static_cast<RdmaServerNapi*>(handle->data)->_handle_async_events();
-}
 
 Napi::Function
 RdmaServerNapi::Init(Napi::Env env)
@@ -218,9 +214,10 @@ RdmaServerNapi::RdmaServerNapi(const Napi::CallbackInfo& info)
     _server = server;
     _buffer_symbol = Napi::Persistent(Napi::Symbol::New(env, "RdmaServerNapiBufferSymbol"));
 
+    // NOTE: initial tests of async events mode showed that it is slower than using worker threads, so keep it disabled by default
+    _use_async_events = params["use_async_events"].ToBoolean();
     _uv_async_handler.data = this;
     uv_prepare_init(uv_default_loop(), &_uv_async_handler);
-    _use_async_events = params["use_async_events"].ToBoolean();
 }
 
 RdmaServerNapi::~RdmaServerNapi()
@@ -326,7 +323,6 @@ RdmaServerNapi::is_registered_buffer(const Napi::CallbackInfo& info)
 Napi::Value
 RdmaServerNapi::rdma(const Napi::CallbackInfo& info)
 {
-    // NOTE: at the moment the async events mode works slower than the threadpool mode.
     if (_use_async_events) {
         return rdma_async_event(info);
     } else {
@@ -508,22 +504,38 @@ RdmaServerNapi::rdma_async_event(const Napi::CallbackInfo& info)
             XSTR() << "RdmaServerNapi: handle call error " << DVAL(r));
     } else {
         async_event.release();
-        if (_async_channels.empty()) {
-            uv_prepare_start(&_uv_async_handler, _uv_handle_async_events);
-        }
+        _start_async_events();
         _async_channels.insert(channel_id);
         return deferred->Promise();
     }
 }
 
+static void
+_uv_handle_async_events(uv_prepare_t* handle)
+{
+    static_cast<RdmaServerNapi*>(handle->data)->_handle_async_events();
+}
+
+void RdmaServerNapi::_start_async_events()
+{
+    if (_async_channels.empty()) {
+        uv_prepare_start(&_uv_async_handler, _uv_handle_async_events);
+    }
+}
+void RdmaServerNapi::_stop_async_events()
+{
+    if (_async_channels.empty()) {
+        uv_prepare_stop(&_uv_async_handler);
+    }
+}
+
+// handler called from the uv event loop to poll for rdma async events
+// it checks all the channels that have pending async events
+// and completes the deferred promise.
 void
 RdmaServerNapi::_handle_async_events()
 {
     // LOG("RdmaServerNapi::_handle_async_events " << DVAL(_async_channels.size()));
-    if (_async_channels.empty()) {
-        // uv_prepare_stop(&_uv_async_handler);
-        return;
-    }
     for (auto it = _async_channels.begin(); it != _async_channels.end();) {
         uint16_t channel_id = *it;
         cuObjAsyncEvent_t poll_event = { nullptr, IBV_WC_SUCCESS };
@@ -549,9 +561,7 @@ RdmaServerNapi::_handle_async_events()
         _server->freeChannelId(channel_id);
         it = _async_channels.erase(it); // erase and advance
     }
-    // if (_async_channels.empty()) {
-    //     uv_prepare_stop(&_uv_async_handler);
-    // }
+    _stop_async_events();
 }
 
 static inline int32_t

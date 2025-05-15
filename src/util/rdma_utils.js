@@ -185,20 +185,61 @@ function slice_rdma_info(rdma_info, offset, size) {
  * @returns {Promise<number>}
  */
 async function read_file_to_rdma(rdma_info, reader, multi_buffer_pool, abort_signal) {
+    if (nb_native().fs.gpfs?.rdma_enabled) {
+        try {
+            const ret_size = await reader.file.read_rdma(
+                reader.fs_context,
+                reader.pos,
+                rdma_info.size,
+                rdma_info.addr,
+                rdma_info.desc,
+            );
+            if (ret_size < 0) {
+                throw new Error(`read_file_to_rdma file.read_rdma failed ${ret_size}`);
+            }
+            return ret_size;
+        } catch (err) {
+            if (err.code === 'EOPNOTSUPP' || err.code === 'EINVAL') {
+                dbg.log0(`RDMA direct from file returned ${err.code}, fallback to read`, err);
+            } else {
+                // any other error is 
+                throw err;
+            }
+        }
+    }
+
     const rdma_server = await s3_rdma_server();
+
+    // we use the largest buffer size we can from the pools, and then read in chunks
     return await multi_buffer_pool.use_buffer(rdma_info.size, async buffer => {
+
         rdma_server.register_buffer(buffer);
+
+        // hopefully we can complete the read in one go but if not, we will read in chunks,
+        // and rdma each one to the client to the correct offset in the remote buffer,
+        // before we read the next chunk to the same local buffer.
         let offset = 0;
         while (offset < rdma_info.size) {
+
+            // allow fast abort by checking before and after the reads
             abort_signal?.throwIfAborted();
-            const rdma_slice_pre_read = slice_rdma_info(rdma_info, offset, buffer.length);
-            const nread = await reader.read_into_buffer(buffer, 0, rdma_slice_pre_read.size);
+
+            // read the next chunk from the file
+            const read_slice = slice_rdma_info(rdma_info, offset, buffer.length);
+            const nread = await reader.read_into_buffer(buffer, 0, read_slice.size);
+
             // console.log('GGG nread', nread);
+            if (nread === 0) break;
+
             abort_signal?.throwIfAborted();
+
             const rdma_slice = slice_rdma_info(rdma_info, offset, nread);
             const ret_size = await rdma_server.rdma('GET', reader.file_path, buffer, rdma_slice);
+
             // console.log('GGG ret_size', ret_size);
-            if (ret_size !== nread) throw new Error('RDMA GET failed');
+            if (ret_size !== nread) {
+                throw new Error(`RDMA GET failed ret_size ${ret_size} != expected ${nread}`);
+            }
             offset += ret_size;
         }
         return offset;
@@ -254,7 +295,9 @@ function s3_rdma_client_plugin(client_buf, rdma_client) {
  * @returns {import('@smithy/types').BuildMiddleware} 
  */
 function s3_rdma_client_middleware(client_buf, rdma_client) {
+    // this is a middleware that sets up rdma adds the RDMA header
     return (next, context) => async args => {
+
         /** @type {any} */
         const input = args.input;
         /** @type {any} */

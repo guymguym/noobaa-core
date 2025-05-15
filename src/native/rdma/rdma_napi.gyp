@@ -9,9 +9,18 @@
             'rdma_server_napi.cpp',
             'rdma_client_napi.cpp',
         ],
-        'variables': {
-            'CUOBJ_PATH%': '''<!(realpath ../../../../cuObject-0.8.1-Linux_x86_64/src)''',
-        },
+        'conditions': [
+            [ 'node_arch=="x64"', {
+                'variables': {
+                    'CUOBJ_PATH%': '''<!(realpath ../../../../cuObject-0.8.1-Linux_x86_64/src)''',
+                },
+            }],
+            [ 'node_arch=="arm64"', {
+                'variables': {
+                    'CUOBJ_PATH%': '''<!(realpath ../../../../cuObject-0.8.1-Linux_aarch64/src)''',
+                },
+            }],
+        ],
         'defines': [
             'BUILD_RDMA_NAPI=1',
         ],

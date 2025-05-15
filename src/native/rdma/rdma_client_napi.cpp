@@ -227,18 +227,18 @@ RdmaClientWorker::Execute()
     }
 
     // register rdma buffer
-    cuObjErr_t ret_get_mem = client->cuMemObjGetDescriptor(_ptr, _size);
-    if (ret_get_mem != CU_OBJ_SUCCESS) {
-        SetError(XSTR() << "RdmaClientWorker: Failed to register rdma buffer " << DVAL(ret_get_mem));
-        return;
-    }
-    StackCleaner cleaner([&] {
-        // release rdma buffer
-        cuObjErr_t ret_put_mem = client->cuMemObjPutDescriptor(_ptr);
-        if (ret_put_mem != CU_OBJ_SUCCESS) {
-            SetError(XSTR() << "RdmaClientWorker: Failed to release rdma buffer " << DVAL(ret_put_mem));
-        }
-    });
+    // cuObjErr_t ret_get_mem = client->cuMemObjGetDescriptor(_ptr, _size);
+    // if (ret_get_mem != CU_OBJ_SUCCESS) {
+    //     SetError(XSTR() << "RdmaClientWorker: Failed to register rdma buffer " << DVAL(ret_get_mem));
+    //     return;
+    // }
+    // StackCleaner cleaner([&] {
+    //     // release rdma buffer
+    //     cuObjErr_t ret_put_mem = client->cuMemObjPutDescriptor(_ptr);
+    //     if (ret_put_mem != CU_OBJ_SUCCESS) {
+    //         SetError(XSTR() << "RdmaClientWorker: Failed to release rdma buffer " << DVAL(ret_put_mem));
+    //     }
+    // });
 
     if (_op_type == CUOBJ_GET) {
         _ret_size = client->cuObjGet(this, _ptr, _size);
@@ -269,11 +269,11 @@ RdmaClientWorker::start_op(
     const void* handle,
     const void* ptr,
     size_t size,
-    loff_t offset,
+    loff_t obj_offset,
     const cufileRDMAInfo_t* rdma_info)
 {
     std::string rdma_desc(rdma_info->desc_str, rdma_info->desc_len - 1);
-    DBG1("RdmaClientWorker::start_op " << DVAL(op_type) << DVAL(ptr) << DVAL(size) << DVAL(offset) << DVAL(rdma_desc));
+    DBG1("RdmaClientWorker::start_op " << DVAL(op_type) << DVAL(ptr) << DVAL(size) << DVAL(rdma_desc));
 
     // this lock and condition variable are used to synchronize the worker thread
     // with the main thread, as the main threas is sending the http request to the server.
@@ -283,13 +283,14 @@ RdmaClientWorker::start_op(
     ASSERT(op_type == _op_type, DVAL(op_type) << DVAL(_op_type));
     ASSERT(ptr == _ptr, DVAL(ptr) << DVAL(_ptr));
     ASSERT(size == _size, DVAL(size) << DVAL(_size));
-    ASSERT(offset == 0, DVAL(offset));
+    ASSERT(obj_offset == 0, DVAL(obj_offset));
 
     // save info for the server request
     _rdma_desc = rdma_desc;
     _rdma_addr = XSTR() << std::hex << uintptr_t(ptr);
     _rdma_size = size;
-    _rdma_offset = offset;
+    // obj_offset refers to the object offset, not the buffer offset
+    _rdma_offset = 0;
 
     // send the op on the main thread by calling a Napi::ThreadSafeFunction.
     // this model is cumbwersome and would be replaced by an async worker in the future.

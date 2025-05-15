@@ -1126,14 +1126,14 @@ class NamespaceFS {
 
             const start_time = process.hrtime.bigint();
             if (params.rdma_info) {
+                const http_res = /** @type {nb.S3Response} */ (res);
+                if (!http_res.setHeader) throw new Error('read_object_stream: cannot rdma to non http response');
                 const size = await rdma_utils.read_file_to_rdma(
                     params.rdma_info,
                     file_reader,
                     multi_buffer_pool,
                     signal,
                 );
-                const http_res = /** @type {nb.S3Response} */ (res);
-                if (!http_res.setHeader) throw new Error('read_object_stream: cannot rdma to non http response');
                 http_res.setHeader('Content-Length', 0);
                 rdma_utils.set_rdma_response_header(null, http_res, params.rdma_info, { size });
             } else {
