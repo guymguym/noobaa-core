@@ -191,7 +191,7 @@ struct gpfs_ganesha_noobaa_arg
 };
 #define OPENHANDLE_REGISTER_NOOBAA 157
 
-static const int DIO_BUFFER_MEMALIGN = 4096;
+static const int PAGE_SIZE = getpagesize();
 
 static void
 buffer_releaser(Napi::Env env, uint8_t* buf)
@@ -1251,7 +1251,7 @@ struct Readfile : public FSWorker
         }
 
         _len = _stat_res.st_size;
-        int r = posix_memalign((void**)&_data, DIO_BUFFER_MEMALIGN, _len);
+        int r = posix_memalign((void**)&_data, PAGE_SIZE, _len);
         if (r || (!_data && _len > 0)) {
             SetError(XSTR() << "FS::readFile: failed to allocate memory " << DVAL(_len) << DVAL(_path));
             return;
@@ -2324,7 +2324,7 @@ dio_buffer_alloc(const Napi::CallbackInfo& info)
 {
     int size = info[0].As<Napi::Number>();
     uint8_t* buf = 0;
-    int r = posix_memalign((void**)&buf, DIO_BUFFER_MEMALIGN, size);
+    int r = posix_memalign((void**)&buf, PAGE_SIZE, size);
     if (r || (!buf && size > 0)) {
         throw Napi::Error::New(info.Env(), "FS::dio_buffer_alloc: failed to allocate memory");
     }
@@ -2415,6 +2415,7 @@ fs_napi(Napi::Env env, Napi::Object exports)
     exports_fs["DT_DIR"] = Napi::Number::New(env, DT_DIR);
     exports_fs["DT_LNK"] = Napi::Number::New(env, DT_LNK);
     exports_fs["PLATFORM_IOV_MAX"] = Napi::Number::New(env, IOV_MAX);
+    exports_fs["PAGE_SIZE"] = Napi::Number::New(env, PAGE_SIZE);
     ThreadScope::init_passwd_buf_size();
 
 
