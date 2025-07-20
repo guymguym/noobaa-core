@@ -435,7 +435,7 @@ class ObjectIO {
         ];
 
         await stream_utils.pipeline(transforms);
-        await stream_utils.wait_finished(uploader);
+        await stream.promises.finished(uploader);
 
         if (splitter.md5) complete_params.md5_b64 = splitter.md5.toString('base64');
         if (splitter.sha256) complete_params.sha256_b64 = splitter.sha256.toString('base64');

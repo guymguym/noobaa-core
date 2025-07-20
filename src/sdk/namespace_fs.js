@@ -1051,7 +1051,7 @@ class NamespaceFS {
                     // if entry is a directory object and its content size = 0 - return empty response
                     if (await this._is_empty_directory_content(file_path, fs_context, params)) {
                         res.end();
-                        // since we don't write anything to the stream wait_finished might not be needed. added just in case there is a delay
+                        // since we don't write anything to the stream wait finished might not be needed. added just in case there is a delay
                         object_sdk.throw_if_aborted();
                         await stream.promises.finished(res, { signal });
                         return null;

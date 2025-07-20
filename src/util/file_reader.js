@@ -218,6 +218,7 @@ class FileReader extends stream.Readable {
     }
 
     /**
+     * See comment in native_fs_utils.warmup_sparse_file()
      * @param {number} pos
      */
     async _warmup_sparse_file(pos) {
