@@ -118,6 +118,12 @@ Error: Unable to find a match: epel-release
     rpm -i boost-system-1.75.0-8.el9.x86_64.rpm
     rpm -i boost-thread-1.75.0-8.el9.x86_64.rpm
     ```
+    Ubuntu 24
+    ```sh
+    apt install libboost-thread1.74.0
+    apt install libboost-thread1.83.0
+    apt install libboost-thread-dev
+    ```
 
 
 ### Install NooBaa RPM
