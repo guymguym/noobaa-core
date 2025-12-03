@@ -1174,7 +1174,8 @@ config.NOOBAA_VERSION_AUTH_ENABLED = process.env.NOOBAA_VERSION_AUTH_ENABLED ===
 //////////////
 
 config.RDMA_ENABLED = true; // TODO STILL EXPERIMENTAL - should be false by default
-
+config.S3_RDMA_SERVER_IPS = [];
+config.S3_RDMA_CLIENT_IPS = [];
 
 /////////////////////
 //                 //

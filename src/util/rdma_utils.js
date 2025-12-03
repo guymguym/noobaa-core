@@ -170,7 +170,7 @@ function s3_rdma_server() {
     }
     if (_rdma_server) return _rdma_server;
     const { RdmaServerNapi } = nb_native();
-    const ip = process.env.S3_RDMA_SERVER_IP || '172.16.0.61';
+    const ip = process.env.S3_RDMA_SERVER_IP || config.S3_RDMA_SERVER_IPS?.[0] || '172.16.0.61';
     _rdma_server = new RdmaServerNapi({
         ip,
         port: 0, // every fork will get a different port
