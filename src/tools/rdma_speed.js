@@ -49,7 +49,7 @@ const pool_bytes = argv.pool_size * size_mult;
 
 if (argv.help) usage();
 
-/** @type {nb.RdmaServerNapi} */
+/** @type {nb.CuObjServerNapi} */
 let rdma_server;
 
 const FILL_GET = 'G'.charCodeAt(0);
@@ -101,8 +101,8 @@ function usage() {
 }
 
 async function run_server() {
-    const { RdmaServerNapi } = nb_native();
-    rdma_server = new RdmaServerNapi({
+    const { CuObjServerNapi } = nb_native();
+    rdma_server = new CuObjServerNapi({
         ip: argv.ip,
         port: 0, // every fork will get a different port
         log_level: 'ERROR',
@@ -189,8 +189,8 @@ async function run_client() {
 }
 
 async function run_client_loop() {
-    const { RdmaClientNapi } = nb_native();
-    const rdma_client = new RdmaClientNapi();
+    const { CuObjClientNapi } = nb_native();
+    const rdma_client = new CuObjClientNapi();
     console.log('RDMA client');
 
     for (; ;) {

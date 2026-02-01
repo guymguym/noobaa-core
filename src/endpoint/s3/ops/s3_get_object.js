@@ -35,7 +35,6 @@ async function get_object(req, res) {
         version_id,
         md_conditions,
         encryption,
-        rdma_info,
     };
     if (req.query.get_from_cache !== undefined) {
         md_params.get_from_cache = true;

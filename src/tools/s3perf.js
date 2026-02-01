@@ -2,6 +2,7 @@
 'use strict';
 
 const minimist = require('minimist');
+const path = require('path');
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
@@ -57,7 +58,7 @@ if (argv.upload && data_size < argv.part_size * 1024 * 1024) {
  *      buffer?: Buffer;
  *      rdma_buf?: Buffer;
  *      cuda_mem?: nb.CudaMemory;
- *      rdma_client?: nb.RdmaClientNapi;
+ *      rdma_client?: nb.CuObjClientNapi;
  *      s3_client?: S3;
  * }} IOWorker
  */
@@ -312,8 +313,13 @@ async function get_object(io_worker) {
  */
 async function put_object(io_worker) {
     const now = Date.now();
-    const key = argv.exact_key ||
-        `${argv.prefix}${io_worker.worker_id}/${io_worker.io_worker_id}/${now % 256}/file${size_name}-${now.toString(36)}`;
+    const key = argv.exact_key || path.join(
+        argv.prefix,
+        process.env.CUDA_VISIBLE_DEVICES ? `GPU${process.env.CUDA_VISIBLE_DEVICES}` : '',
+        `${io_worker.worker_id || 1}`,
+        `${io_worker.io_worker_id}`,
+        `${now % 4}`,
+        `file${size_name}-${now.toString(36)}`);
 
     const res = await io_worker.s3_client.putObject({
         Bucket: argv.bucket,
@@ -338,8 +344,13 @@ async function put_object(io_worker) {
  */
 async function upload_object(io_worker) {
     const now = Date.now();
-    const key = argv.exact_key ||
-        `${argv.prefix}${io_worker.worker_id}/${io_worker.io_worker_id}/${now % 256}/file${size_name}-${now.toString(36)}`;
+    const key = argv.exact_key || path.join(
+        argv.prefix,
+        process.env.CUDA_VISIBLE_DEVICES ? `GPU${process.env.CUDA_VISIBLE_DEVICES}` : '',
+        `${io_worker.worker_id || 1}`,
+        `${io_worker.io_worker_id}`,
+        `${now % 4}`,
+        `file${size_name}-${now.toString(36)}`);
 
     const upload = new Upload({
         client: io_worker.s3_client,

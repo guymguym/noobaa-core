@@ -478,7 +478,7 @@ async function get_object() {
 async function get_object_rdma(params, data_size, speedometer, on_finish) {
     const nb_native = require('../util/nb_native');
     const rdma_utils = require('../util/rdma_utils');
-    const rdma_client = new (nb_native().RdmaClientNapi)();
+    const rdma_client = new (nb_native().CuObjClientNapi)();
     const buffer = nb_native().fs.dio_buffer_alloc(data_size);
     const cuda_mem = argv.cuda ? new (nb_native().CudaMemory)(data_size) : undefined;
     const rdma_buf = argv.cuda ? cuda_mem.as_buffer() : buffer;
@@ -503,7 +503,7 @@ async function get_object_rdma(params, data_size, speedometer, on_finish) {
 async function put_object_rdma(upload_key, data_size, content_type, on_progress, on_finish) {
     const nb_native = require('../util/nb_native');
     const rdma_utils = require('../util/rdma_utils');
-    const rdma_client = new (nb_native().RdmaClientNapi)();
+    const rdma_client = new (nb_native().CuObjClientNapi)();
     const buffer = nb_native().fs.dio_buffer_alloc(data_size);
     const cuda_mem = argv.cuda ? new (nb_native().CudaMemory)(data_size) : undefined;
     const rdma_buf = argv.cuda ? cuda_mem.as_buffer() : buffer;

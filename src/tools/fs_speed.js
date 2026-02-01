@@ -20,6 +20,7 @@ Usage:
   --concur <n>      (default 1) number of concurrent writers
   --forks <n>       (default 1) number of forks to create (total writers is concur * forks).
 Modes:
+  --direct          use direct I/O for read (default is false)
   --write           do write test (default is false)
   --fsync           trigger fsync at the end of each file (default is true)
   --mode <mode>     (default is "nsfs") options are
@@ -47,6 +48,7 @@ if (argv.help) {
 
 argv.path = argv.path || 'fs_speed_output';
 argv.write = Boolean(argv.write || false);
+argv.direct = Boolean(argv.direct || false);
 argv.time = Number(argv.time ?? 10); // stop after X seconds
 argv.concur = Number(argv.concur ?? 1);
 argv.forks = Number(argv.forks ?? 1);
@@ -142,13 +144,18 @@ async function workers_func(worker_id, worker_info) {
  * @param {number} io_worker_id
  */
 async function io_worker(worker_id, io_worker_id) {
+    process.chdir(argv.path);
     const dir = path.join(
-        argv.path,
+        // argv.path,
         size_name,
-        `${worker_id}`,
+        `${worker_id || 1}`,
         `${io_worker_id}`,
     );
     await fs.promises.mkdir(dir, { recursive: true });
+    const HASH_DIRS = 4;
+    for (let i = 0; i < HASH_DIRS; ++i) {
+        await fs.promises.mkdir(path.join(dir, String(i)), { recursive: true });
+    }
     const worker_buf = Buffer.allocUnsafeSlow(block_size);
 
     const start_time = Date.now();
@@ -159,7 +166,7 @@ async function io_worker(worker_id, io_worker_id) {
         if (now >= end_time) break;
 
         let file_path;
-        const hash_dir = path.join(dir, String(now % 256));
+        const hash_dir = path.join(dir, String(now % HASH_DIRS));
         if (argv.write) {
             file_path = path.join(hash_dir, `file${size_name}-${now.toString(36)}`);
         } else {
@@ -191,7 +198,8 @@ async function io_worker(worker_id, io_worker_id) {
 }
 
 async function work_with_nsfs(file_path, buf) {
-    const file = await nb_native().fs.open(fs_context, file_path, argv.write ? 'w' : 'r', 0o660);
+    const mode = (argv.write && 'w') || (argv.direct && 'rd') || 'r';
+    const file = await nb_native().fs.open(fs_context, file_path, mode, 0o660);
     if (!argv.write) {
         const stat = await file.stat(fs_context);
         if (stat.size !== file_size_aligned) {

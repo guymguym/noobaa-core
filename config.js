@@ -1173,9 +1173,25 @@ config.NOOBAA_VERSION_AUTH_ENABLED = process.env.NOOBAA_VERSION_AUTH_ENABLED ===
 ///  RDMA  ///
 //////////////
 
-config.RDMA_ENABLED = true; // TODO STILL EXPERIMENTAL - should be false by default
+config.S3_RDMA_ENABLED = true; // EXPERIMENTAL - should be false by default
 config.S3_RDMA_SERVER_IPS = [];
 config.S3_RDMA_CLIENT_IPS = [];
+config.S3_RDMA_LOG_LEVEL = /** @type {'ERROR' | 'INFO' | 'DEBUG'} */ ('INFO');
+config.S3_RDMA_USE_TELEMETRY = true;
+config.S3_RDMA_USE_ASYNC_EVENTS = false; // false by default - lowers performance.
+config.S3_RDMA_DC_KEY = 0xffeeddcc; // must match between client and server
+
+
+// client request header that identifies the RDMA token type and the library used
+config.S3_RDMA_AGENT_HDR = 'x-amz-rdma-agent';
+config.S3_RDMA_AGENT_CUOBJ = 'cuobj';
+// client request header for the RDMA token
+config.S3_RDMA_TOKEN_HDR = 'x-amz-rdma-token';
+config.S3_RDMA_VALIDATE_TOKEN_HDR = true;
+// server response header for reply code (e.g. 200, 204, 206, 501) 
+config.S3_RDMA_REPLY_HDR = 'x-amz-rdma-reply';
+// server response header for number of bytes transferred
+config.S3_RDMA_BYTES_HDR = 'x-amz-rdma-bytes';
 
 /////////////////////
 //                 //

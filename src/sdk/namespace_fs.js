@@ -880,7 +880,7 @@ class NamespaceFS {
                 try {
                     dbg.warn('NamespaceFS: open dir streaming', dir_path, 'size', cached_dir.stat.size);
                     dir_handle = await nb_native().fs.opendir(fs_context, dir_path); //, { bufferSize: 128 });
-                    for (;;) {
+                    for (; ;) {
                         const dir_entry = await dir_handle.read(fs_context);
                         if (!dir_entry) break;
                         await process_entry(dir_entry);
@@ -976,7 +976,7 @@ class NamespaceFS {
         let isDir;
         let retries = (this._is_versioning_enabled() || this._is_versioning_suspended()) ? config.NSFS_RENAME_RETRIES : 0;
         try {
-            for (;;) {
+            for (; ;) {
                 try {
                     object_sdk.throw_if_aborted();
                     file_path = await this._find_version_path(fs_context, params, true);
@@ -1056,7 +1056,7 @@ class NamespaceFS {
             await this._load_bucket(params, fs_context);
             let retries = (this._is_versioning_enabled() || this._is_versioning_suspended()) ? config.NSFS_RENAME_RETRIES : 0;
             let stat;
-            for (;;) {
+            for (; ;) {
                 try {
                     object_sdk.throw_if_aborted();
                     file_path = await this._find_version_path(fs_context, params);
@@ -1146,16 +1146,19 @@ class NamespaceFS {
             if (params.rdma_info) {
                 const http_res = /** @type {nb.S3Response} */ (res);
                 if (!http_res.setHeader) throw new Error('read_object_stream: cannot rdma to non http response');
-                const size = await rdma_utils.read_file_to_rdma(
+                const num_bytes = await rdma_utils.read_file_to_rdma(
                     params.rdma_info,
                     file_reader,
                     multi_buffer_pool,
                     signal,
                 );
                 http_res.setHeader('Content-Length', 0);
-                rdma_utils.set_rdma_response_headers(null, http_res, params.rdma_info, { size });
+                rdma_utils.set_rdma_response_headers(null, http_res, params.rdma_info, {
+                    status_code: http_res.statusCode || 200, // 206 for range requests
+                    num_bytes
+                });
             } else {
-            await file_reader.read_into_stream(res);
+                await file_reader.read_into_stream(res);
             }
             res.end();
             const took_ms = Number(process.hrtime.bigint() - start_time) / 1e6;
@@ -1458,7 +1461,7 @@ class NamespaceFS {
         dbg.log2('_move_to_dest', fs_context, source_path, dest_path, target_file, open_mode, key);
         let retries = config.NSFS_RENAME_RETRIES;
         // will retry renaming a file in case of parallel deleting of the destination path
-        for (;;) {
+        for (; ;) {
             try {
                 if (this._is_versioning_disabled()) {
                     await native_fs_utils._make_path_dirs(dest_path, fs_context);
@@ -3143,7 +3146,7 @@ class NamespaceFS {
         const is_lifecycle_deletion = this.is_lifecycle_deletion_flow(params);
         const is_gpfs = native_fs_utils._is_gpfs(fs_context);
 
-        for (;;) {
+        for (; ;) {
             let file_path;
             let files;
             try {
@@ -3289,7 +3292,7 @@ class NamespaceFS {
         dbg.log1('Namespace_fs._promote_version_to_latest', params, deleted_version_info, latest_ver_path);
 
         let retries = config.NSFS_RENAME_RETRIES;
-        for (;;) {
+        for (; ;) {
             try {
                 const latest_version_info = await this._get_version_info(fs_context, latest_ver_path);
                 if (latest_version_info) return;
@@ -3345,7 +3348,7 @@ class NamespaceFS {
         let retries = config.NSFS_RENAME_RETRIES;
         let latest_ver_info;
         let versioned_path;
-        for (;;) {
+        for (; ;) {
             try {
                 latest_ver_info = await this._get_version_info(fs_context, latest_ver_path);
                 dbg.log1('Namespace_fs._delete_latest_version:', latest_ver_info);
@@ -3413,7 +3416,7 @@ class NamespaceFS {
         const is_gpfs = native_fs_utils._is_gpfs(fs_context);
 
         let retries = config.NSFS_RENAME_RETRIES;
-        for (;;) {
+        for (; ;) {
             try {
                 const null_versioned_path_info = await this._get_version_info(fs_context, null_versioned_path);
                 dbg.log1('Namespace_fs._delete_null_version_from_versions_directory:', null_versioned_path, null_versioned_path_info);
@@ -3441,7 +3444,7 @@ class NamespaceFS {
         let retries = config.NSFS_RENAME_RETRIES;
         let upload_params;
         let delete_marker_version_id;
-        for (;;) {
+        for (; ;) {
             try {
                 upload_params = await this._start_upload(fs_context, undefined, undefined, params, 'w');
 

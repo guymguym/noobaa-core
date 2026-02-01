@@ -43,6 +43,7 @@ type S3Request = IncomingMessage & {
     content_sha256_buf?: Buffer;
     content_sha256_sig?: string;
     chunked_content?: boolean;
+    s3_event_method?: string;
 };
 
 type ReplicationLogAction = 'copy' | 'delete' | 'conflict';
@@ -970,8 +971,8 @@ interface Native {
     S3Select: { new(options: S3SelectOptions): S3Select };
     select_parquet: boolean;
 
-    RdmaServerNapi: { new(params: RdmaServerNapiParams): RdmaServerNapi };
-    RdmaClientNapi: { new(): RdmaClientNapi };
+    CuObjServerNapi: { new(params: CuObjServerNapiParams): CuObjServerNapi };
+    CuObjClientNapi: { new(): CuObjClientNapi };
     CudaMemory: { new(size: number): CudaMemory };
 }
 
@@ -1176,53 +1177,67 @@ interface S3Select {
     select_parquet(): Promise<Buffer>;
 }
 
+//////////
+// RDMA //
+//////////
+
 interface RdmaInfo {
-    desc: string;
-    addr: string;
-    size: number;
-    offset: number;
+    desc: string; // rdma buffer descriptor (token)
+    offset: number; // byte offset in the buffer
+    size: number; // max buffer size in bytes
 }
 
 interface RdmaReply {
-    size: number;
+    status_code: number; // 501 for not supported, 200,204,206 for success
+    num_bytes?: number;
 }
 
-interface RdmaServerNapiParams {
+interface CuObjServerNapiParams {
     ip: string;
     port: number;
     log_level?: 'ERROR' | 'INFO' | 'DEBUG';
+    use_telemetry?: boolean;
     use_async_events?: boolean;
     num_dcis?: number;
     cq_depth?: number;
     dc_key?: number;
     ibv_poll_max_comp_event?: number;
     service_level?: number;
-    min_rnr_timer?: number;
     hop_limit?: number;
     pkey_index?: number;
     max_wr?: number;
     max_sge?: number;
     delay_mode?: number;
     delay_interval?: number;
+    qp_reset_on_failure?: boolean;
+    retry_count?: number;
 }
 
-interface RdmaServerNapi {
-    register_buffer(buf: Buffer): void;
-    deregister_buffer(buf: Buffer): void;
-    is_registered_buffer(buf: Buffer): boolean;
+interface CuObjServerNapi {
+    register_buffer(server_buf: Buffer): void;
+    deregister_buffer(server_buf: Buffer): void;
+    is_registered_buffer(server_buf: Buffer): boolean;
     rdma(
         op_type: 'GET' | 'PUT',
         op_key: string,
-        buf: Buffer,
-        rdma_info: RdmaInfo,
+        server_buf: Buffer,
+        server_buf_offset: number,
+        client_buf_desc: string,
+        client_buf_offset: number,
+        max_size: number,
     ): Promise<number>;
 }
 
-interface RdmaClientNapi {
+interface CuObjClientNapi {
+    register_buffer(client_buf: Buffer): void;
+    deregister_buffer(client_buf: Buffer): void;
+    is_registered_buffer(client_buf: Buffer): boolean;
     rdma(
         op_type: 'GET' | 'PUT',
-        buf: Buffer,
-        func: (rdma_info: RdmaInfo, callback: NodeCallback<number>) => void,
+        client_buf: Buffer,
+        client_buf_offset: number,
+        max_size: number,
+        func: (client_buf_desc: string, callback: NodeCallback<number>) => void,
     ): Promise<number>;
 }
 
