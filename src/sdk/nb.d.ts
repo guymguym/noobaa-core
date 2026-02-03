@@ -1185,6 +1185,7 @@ interface RdmaInfo {
     desc: string; // rdma buffer descriptor (token)
     offset: number; // byte offset in the buffer
     size: number; // max buffer size in bytes
+    ip: string; // rdma interface ip
 }
 
 interface RdmaReply {
@@ -1220,10 +1221,10 @@ interface CuObjServerNapi {
     rdma(
         op_type: 'GET' | 'PUT',
         op_key: string,
-        server_buf: Buffer,
-        server_buf_offset: number,
         client_buf_desc: string,
         client_buf_offset: number,
+        server_buf: Buffer,
+        server_buf_offset: number,
         max_size: number,
     ): Promise<number>;
 }

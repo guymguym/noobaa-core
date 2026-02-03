@@ -33,6 +33,7 @@ function parse_hex_number(str) {
 */
 function decode_cuobj_token_hdr(token) {
     if (config.S3_RDMA_VALIDATE_TOKEN_HDR) {
+        // validate token length
         if (token.length !== CUOBJ_TOKEN_FMT.length) {
             dbg.error(`decode_cuobj_token_hdr: invalid ${config.S3_RDMA_TOKEN_HDR}: ${token}`,
                 `length ${token.length} expected ${CUOBJ_TOKEN_FMT.length}`);
@@ -41,11 +42,13 @@ function decode_cuobj_token_hdr(token) {
     }
     const fields = token.split(':');
     if (config.S3_RDMA_VALIDATE_TOKEN_HDR) {
+        // validate number of fields
         if (fields.length !== CUOBJ_TOKEN_FIELDS.length) {
             dbg.error(`decode_cuobj_token_hdr: invalid ${config.S3_RDMA_TOKEN_HDR}: ${token}`,
                 `fields ${fields.length} expected ${CUOBJ_TOKEN_FIELDS.length}`);
             throw new S3Error(S3Error.InvalidArgument);
         }
+        // validate each field length
         for (let i = 0; i < CUOBJ_TOKEN_FIELDS.length; i++) {
             if (fields[i].length !== CUOBJ_TOKEN_FIELDS[i].length) {
                 dbg.error(`decode_cuobj_token_hdr: invalid ${config.S3_RDMA_TOKEN_HDR}: ${token}`,
@@ -55,7 +58,7 @@ function decode_cuobj_token_hdr(token) {
         }
     }
     const size = parse_hex_number(fields[1]);
-    return { desc: token, size, offset: 0 };
+    return { desc: token, size, offset: 0, ip: '' };
 
     // we don't need to parse the other token fields for now, keep for reference:
     // const addr = fields[0]; // string because uint64 does not fit in JS number
@@ -72,13 +75,14 @@ function decode_cuobj_token_hdr(token) {
  * @returns {nb.RdmaInfo|undefined}
  */
 function parse_rdma_info(req) {
+    // rdma agent header is cuobj by default if missing
     const rdma_agent = http_utils.hdr_as_str(req.headers, config.S3_RDMA_AGENT_HDR);
-
-    // rdma agent can be empty, in which case we assume it is cuobj by default
     if (!rdma_agent || rdma_agent === config.S3_RDMA_AGENT_CUOBJ) {
-        const rdma_token_hdr = http_utils.hdr_as_str(req.headers, config.S3_RDMA_TOKEN_HDR);
-        if (!rdma_token_hdr) return;
-        return decode_cuobj_token_hdr(rdma_token_hdr);
+        const rdma_token = http_utils.hdr_as_str(req.headers, config.S3_RDMA_TOKEN_HDR);
+        if (!rdma_token) return;
+        const rdma_info = decode_cuobj_token_hdr(rdma_token);
+        rdma_info.ip = req.socket?.localAddress || ''; // the server RDMA interface ip
+        return rdma_info;
     }
 
     dbg.error(`parse_rdma_info: unsupported ${config.S3_RDMA_AGENT_HDR}:`, rdma_agent);
@@ -144,28 +148,60 @@ function set_rdma_response_headers(req, res, rdma_info, rdma_reply) {
 // RDMA SERVER //
 /////////////////
 
-let _rdma_server = null;
+/** @type {Record<string, nb.CuObjServerNapi>} */
+const _rdma_servers = {};
 
 /**
+ * @param {string} ip
  * @returns {nb.CuObjServerNapi}
  */
-function s3_rdma_server() {
+function s3_rdma_server(ip) {
     if (!config.S3_RDMA_ENABLED) {
         throw new Error('config.S3_RDMA_ENABLED is not enabled');
     }
-    if (_rdma_server) return _rdma_server;
+    // TODO group rdma servers by fabrics to use multiple interfaces
+    // const ip = process.env.S3_RDMA_SERVER_IP || config.S3_RDMA_SERVER_IPS?.[0];
+    if (_rdma_servers[ip]) return _rdma_servers[ip];
     const { CuObjServerNapi } = nb_native();
-    const ip = process.env.S3_RDMA_SERVER_IP || config.S3_RDMA_SERVER_IPS?.[0] || '172.16.0.61';
-    _rdma_server = new CuObjServerNapi({
+    _rdma_servers[ip] = new CuObjServerNapi({
         ip,
         port: 0, // every fork will get a different port
         log_level: config.S3_RDMA_LOG_LEVEL,
         use_telemetry: config.S3_RDMA_USE_TELEMETRY,
         use_async_events: config.S3_RDMA_USE_ASYNC_EVENTS,
         dc_key: config.S3_RDMA_DC_KEY,
+        num_dcis: config.S3_RDMA_NUM_DCIS,
     });
     console.log('RDMA server:', ip);
-    return _rdma_server;
+    return _rdma_servers[ip];
+}
+
+/**
+ * @param {nb.RdmaInfo} rdma_info
+ * @param {import ('./file_writer')} writer
+ * @param {import ('./buffer_utils').MultiSizeBuffersPool} multi_buffer_pool
+ * @param {AbortSignal|undefined} abort_signal
+ * @returns {Promise<nb.RdmaReply|undefined>}
+ */
+async function write_file_from_rdma(rdma_info, writer, multi_buffer_pool, abort_signal) {
+    const ret_direct = await write_file_from_rdma_direct(rdma_info, writer, multi_buffer_pool, abort_signal);
+    if (ret_direct) return ret_direct;
+    const ret_buffered = await write_file_from_rdma_buffered(rdma_info, writer, multi_buffer_pool, abort_signal);
+    return ret_buffered;
+}
+
+/**
+ * @param {nb.RdmaInfo} rdma_info
+ * @param {import ('./file_reader').FileReader} reader
+ * @param {import ('./buffer_utils').MultiSizeBuffersPool} multi_buffer_pool
+ * @param {AbortSignal|undefined} abort_signal
+ * @returns {Promise<number>}
+ */
+async function read_file_to_rdma(rdma_info, reader, multi_buffer_pool, abort_signal) {
+    const ret_direct = await read_file_to_rdma_direct(rdma_info, reader, multi_buffer_pool, abort_signal);
+    if (ret_direct >= 0) return ret_direct;
+    const ret_buffered = await read_file_to_rdma_buffered(rdma_info, reader, multi_buffer_pool, abort_signal);
+    return ret_buffered;
 }
 
 /**
@@ -175,42 +211,25 @@ function s3_rdma_server() {
  * @param {nb.RdmaInfo} rdma_info
  * @param {import ('./file_writer')} writer
  * @param {import ('./buffer_utils').MultiSizeBuffersPool} multi_buffer_pool
- * @param {AbortSignal} [abort_signal]
+ * @param {AbortSignal|undefined} abort_signal
  * @returns {Promise<nb.RdmaReply|undefined>}
  */
-async function write_file_from_rdma(rdma_info, writer, multi_buffer_pool, abort_signal) {
-    if (nb_native().fs.gpfs?.rdma_enabled) {
-        try {
-            const ret_size = await writer.target_file.write_rdma(
-                writer.fs_context,
-                writer.offset,
-                rdma_info.size,
-                rdma_info.desc,
-            );
-            if (ret_size < 0) {
-                throw new Error(`write_file_from_rdma: gpfs write_rdma failed ${ret_size}`);
-            }
-            return { status_code: 200, num_bytes: ret_size };
-        } catch (err) {
-            if (err.code === 'EOPNOTSUPP' || err.code === 'EINVAL') {
-                dbg.log0(`RDMA direct from file returned ${err.code}, fallback to read`, err);
-            } else {
-                // throw any other error
-                // TODO(guym) should we fallback on all errors?
-                throw err;
-            }
-        }
-    }
-
-    const rdma_server = await s3_rdma_server();
+async function write_file_from_rdma_buffered(rdma_info, writer, multi_buffer_pool, abort_signal) {
+    const rdma_server = await s3_rdma_server(rdma_info.ip);
+    // we use the largest buffer size we can from the pools, and then read in chunks
     return await multi_buffer_pool.use_buffer(rdma_info.size, async buffer => {
         rdma_server.register_buffer(buffer);
-        let client_buf_offset = 0;
-        while (client_buf_offset < rdma_info.size) {
+        let pos = 0;
+        while (pos < rdma_info.size) {
             abort_signal?.throwIfAborted();
             // transfer data from remote to our local buffer
-            const ret_size = await rdma_server.rdma('PUT', 'FileWriter', buffer, 0, rdma_info.desc, client_buf_offset, buffer.length);
-            // console.log('GGG ret_size', ret_size);
+            const client_buf_offset = rdma_info.offset + pos;
+            const ret_size = await rdma_server.rdma(
+                'PUT', 'FileWriter',
+                rdma_info.desc,
+                client_buf_offset,
+                buffer, 0, buffer.length);
+            // console.log('GGG RDMA ret_size', ret_size);
             if (ret_size < 0) throw new Error('RDMA PUT failed');
             if (ret_size > buffer.length) throw new Error('RDMA PUT error: returned size is larger than buffer');
             if (ret_size === 0) break;
@@ -220,96 +239,131 @@ async function write_file_from_rdma(rdma_info, writer, multi_buffer_pool, abort_
             } else {
                 await writer.write_buffers([buffer.subarray(0, ret_size)], ret_size);
             }
-            client_buf_offset += ret_size;
+            pos += ret_size;
         }
         abort_signal?.throwIfAborted();
         await writer.finalize();
-        // console.log('GGG writer.total_bytes', writer.total_bytes);
-        return { status_code: 200, size: client_buf_offset };
+        // console.log('GGG RDMA writer.total_bytes', writer.total_bytes);
+        return { status_code: 200, size: pos };
     });
-}
-
-/**
- * @param {nb.RdmaInfo} rdma_info
- * @param {number} offset
- * @param {number} size
- * @returns {nb.RdmaInfo}
- */
-function slice_rdma_info(rdma_info, offset, size) {
-    const slice = { ...rdma_info };
-    slice.offset += offset;
-    slice.size -= offset;
-    if (slice.size > size) slice.size = size;
-    return slice;
 }
 
 /**
  * @param {nb.RdmaInfo} rdma_info
  * @param {import ('./file_reader').FileReader} reader
  * @param {import ('./buffer_utils').MultiSizeBuffersPool} multi_buffer_pool
- * @param {AbortSignal} [abort_signal]
+ * @param {AbortSignal|undefined} abort_signal
  * @returns {Promise<number>}
  */
-async function read_file_to_rdma(rdma_info, reader, multi_buffer_pool, abort_signal) {
-    if (nb_native().fs.gpfs?.rdma_enabled) {
-        try {
-            const ret_size = await reader.file.read_rdma(
-                reader.fs_context,
-                reader.pos,
-                rdma_info.size,
-                rdma_info.addr,
-                rdma_info.desc,
-            );
-            if (ret_size < 0) {
-                throw new Error(`read_file_to_rdma gpfs_read_rdma failed ${ret_size}`);
-            }
-            return ret_size;
-        } catch (err) {
-            if (err.code === 'EOPNOTSUPP' || err.code === 'EINVAL') {
-                dbg.log0(`RDMA direct from file returned ${err.code}, fallback to read`, err);
-            } else {
-                // any other error is 
-                throw err;
-            }
-        }
-    }
+async function read_file_to_rdma_buffered(rdma_info, reader, multi_buffer_pool, abort_signal) {
+    const rdma_server = await s3_rdma_server(rdma_info.ip);
 
-    const rdma_server = await s3_rdma_server();
-
-    // we use the largest buffer size we can from the pools, and then read in chunks
+    // we use the largest buffer size we can from the pools
+    // hopefully we can complete the read in one go but if not, we will iterate in blocks,
+    // and rdma each one to the client to the correct offset in the remote buffer,
+    // before we read the next chunk to the same local buffer.
     return await multi_buffer_pool.use_buffer(rdma_info.size, async buffer => {
 
         rdma_server.register_buffer(buffer);
 
-        // hopefully we can complete the read in one go but if not, we will read in chunks,
-        // and rdma each one to the client to the correct offset in the remote buffer,
-        // before we read the next chunk to the same local buffer.
-        let offset = 0;
-        while (offset < rdma_info.size) {
+        // iterate with blocks
+        let pos = 0;
+        while (pos < rdma_info.size) {
 
             // allow fast abort by checking before and after the reads
             abort_signal?.throwIfAborted();
 
-            // read the next chunk from the file
-            const read_slice = slice_rdma_info(rdma_info, offset, buffer.length);
-            const nread = await reader.read_into_buffer(buffer, 0, read_slice.size);
+            // read the next chunk from the file into local buffer
+            const client_buf_offset = rdma_info.offset + pos;
+            const remain_size = rdma_info.size - pos;
+            const read_size = Math.min(remain_size, buffer.length);
+            const nread = await reader.read_into_buffer(buffer, 0, read_size);
+            // console.log('GGG RDMA nread', nread);
 
-            // console.log('GGG nread', nread);
-            if (nread === 0) break;
+            if (nread === 0) break; // EOF
 
             abort_signal?.throwIfAborted();
 
-            const rdma_slice = slice_rdma_info(rdma_info, offset, nread);
-            const ret_size = await rdma_server.rdma('GET', reader.file_path, buffer, rdma_slice);
+            const ret_size = await rdma_server.rdma(
+                'GET', reader.file_path,
+                rdma_info.desc,
+                client_buf_offset,
+                buffer, 0, nread);
 
-            // console.log('GGG ret_size', ret_size);
+            // console.log('GGG RDMA ret_size', ret_size);
             if (ret_size !== nread) {
                 throw new Error(`RDMA GET failed ret_size ${ret_size} != expected ${nread}`);
             }
-            offset += ret_size;
+            pos += ret_size;
         }
-        return offset;
+        return pos;
     });
+}
+
+
+/**
+ * @param {nb.RdmaInfo} rdma_info
+ * @param {import ('./file_writer')} writer
+ * @param {import ('./buffer_utils').MultiSizeBuffersPool} multi_buffer_pool
+ * @param {AbortSignal|undefined} abort_signal
+ * @returns {Promise<nb.RdmaReply|undefined>}
+ */
+async function write_file_from_rdma_direct(rdma_info, writer, multi_buffer_pool, abort_signal) {
+    if (!nb_native().fs.gpfs?.rdma_enabled) return;
+    try {
+        const ret_size = await writer.target_file.write_rdma(
+            writer.fs_context,
+            writer.offset,
+            rdma_info.size,
+            rdma_info.desc,
+        );
+        if (ret_size < 0) {
+            throw new Error(`write_file_from_rdma: gpfs write_rdma failed ${ret_size}`);
+        }
+        return { status_code: 200, num_bytes: ret_size };
+    } catch (err) {
+        if (err.code === 'EOPNOTSUPP' || err.code === 'EINVAL') {
+            dbg.log0(`RDMA direct from file returned ${err.code}, fallback to read`, err);
+        } else {
+            // throw any other error
+            // TODO(guym) should we fallback on all errors?
+            throw err;
+        }
+    }
+}
+
+
+/**
+ * @param {nb.RdmaInfo} rdma_info
+ * @param {import ('./file_reader').FileReader} reader
+ * @param {import ('./buffer_utils').MultiSizeBuffersPool} multi_buffer_pool
+ * @param {AbortSignal|undefined} abort_signal
+ * @returns {Promise<number>}
+ */
+async function read_file_to_rdma_direct(rdma_info, reader, multi_buffer_pool, abort_signal) {
+    if (!nb_native().fs.gpfs?.rdma_enabled) return -1;
+    try {
+        const ret_size = await reader.file.read_rdma(
+            reader.fs_context,
+            reader.pos,
+            rdma_info.size,
+            rdma_info.addr,
+            rdma_info.desc,
+        );
+        if (ret_size < 0) {
+            throw new Error(`read_file_to_rdma gpfs_read_rdma failed ${ret_size}`);
+        }
+        return ret_size;
+    } catch (err) {
+        if (err.code === 'EOPNOTSUPP' || err.code === 'EINVAL') {
+            dbg.log0(`RDMA direct from file returned ${err.code}, fallback to read`, err);
+        } else {
+            // throw any other error
+            // TODO(guym) should we fallback on all errors?
+            throw err;
+        }
+    }
+    return -1;
 }
 
 

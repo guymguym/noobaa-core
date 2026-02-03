@@ -1637,10 +1637,26 @@ class NamespaceFS {
         }
     }
 
-    // Allocated the largest semaphore size config.NSFS_BUF_SIZE_L in Semaphore but in fact we can take up more inside
-    // This is due to MD5 calculation and data buffers
-    // Can be finetuned further on if needed and inserting the Semaphore logic inside
-    // Instead of wrapping the whole _upload_stream function (q_buffers lives outside of the data scope of the stream)
+    /**
+     * Allocated the largest semaphore size config.NSFS_BUF_SIZE_L in Semaphore but in fact we can take up more inside
+     * This is due to MD5 calculation and data buffers
+     * Can be finetuned further on if needed and inserting the Semaphore logic inside
+     * Instead of wrapping the whole _upload_stream function (q_buffers lives outside of the data scope of the stream)
+     * 
+     * @param {{
+     *  fs_context: nb.NativeFSContext,
+     *  params: Record<any, any>,
+     *  target_file: nb.NativeFile,
+     *  object_sdk: nb.ObjectSDK,
+     *  offset?: number
+     * }} params
+     * 
+     * @returns {Promise<{
+     *  digest: string,
+     *  total_bytes: number,
+     *  rdma_reply?: nb.RdmaReply,
+     * }>}
+     */
     async _upload_stream({ fs_context, params, target_file, object_sdk, offset }) {
         const { copy_source } = params;
         const signal = object_sdk.abort_controller.signal;

@@ -1179,8 +1179,10 @@ config.S3_RDMA_CLIENT_IPS = [];
 config.S3_RDMA_LOG_LEVEL = /** @type {'ERROR' | 'INFO' | 'DEBUG'} */ ('INFO');
 config.S3_RDMA_USE_TELEMETRY = true;
 config.S3_RDMA_USE_ASYNC_EVENTS = false; // false by default - lowers performance.
-config.S3_RDMA_DC_KEY = 0xffeeddcc; // must match between client and server
-
+// Dynamic Connection key value used for RDMA secure communication. Default: 0xffeeddcc. Must match between client and server.
+config.S3_RDMA_DC_KEY = 0xffeeddcc;
+// Number of Dynamic Connection Interfaces (DCIs) - controls max concurrent connections. Default: 128
+config.S3_RDMA_NUM_DCIS = 128; // increase for higher concurrency
 
 // client request header that identifies the RDMA token type and the library used
 config.S3_RDMA_AGENT_HDR = 'x-amz-rdma-agent';

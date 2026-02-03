@@ -58,12 +58,12 @@ struct CuObjServerWorker : public ObjectWrapWorker<CuObjServerNapi>
     std::shared_ptr<cuObjServer> _server;
     cuObjOpType_t _op_type;
     std::string _op_key;
+    std::string _client_buf_desc;
+    loff_t _client_buf_offset;
     RdmaBufHandle* _server_buf_handle;
     void* _server_buf_ptr;
     size_t _server_buf_size;
     loff_t _server_buf_offset;
-    std::string _client_buf_desc;
-    loff_t _client_buf_offset;
     size_t _max_size;
     ssize_t _ret_size;
     thread_local static uint16_t _thread_channel_id;
@@ -419,11 +419,11 @@ CuObjServerWorker::CuObjServerWorker(const Napi::CallbackInfo& info)
     : ObjectWrapWorker<CuObjServerNapi>(info)
     , _server(_wrap->_server)
     , _op_type(CUOBJ_INVALID)
+    , _client_buf_offset(0)
     , _server_buf_handle(0)
     , _server_buf_ptr(0)
     , _server_buf_size(0)
     , _server_buf_offset(0)
-    , _client_buf_offset(0)
     , _max_size(0)
     , _ret_size(-1)
 {
@@ -435,19 +435,15 @@ CuObjServerWorker::CuObjServerWorker(const Napi::CallbackInfo& info)
         throw Napi::Error::New(env,
             XSTR() << "CuObjServerNapi: bad op type " << DVAL(_op_type));
     }
-    auto server_buf = info[2].As<Napi::Buffer<uint8_t>>();
+    _client_buf_desc = napi_get_str(info[2]);
+    _client_buf_offset = napi_is_defined(info[3]) ? napi_get_i64(info[3]) : 0;
+    auto server_buf = info[4].As<Napi::Buffer<uint8_t>>();
     _server_buf_ptr = server_buf.Data();
     _server_buf_size = server_buf.Length();
     _server_buf_handle = _wrap->_get_server_buf_handle(env, server_buf);
-    _server_buf_offset = napi_is_defined(info[3]) ? napi_get_i64(info[3]) : 0;
-    _client_buf_desc = napi_get_str(info[4]);
-    _client_buf_offset = napi_is_defined(info[5]) ? napi_get_i64(info[5]) : 0;
+    _server_buf_offset = napi_is_defined(info[5]) ? napi_get_i64(info[5]) : 0;
     _max_size = napi_get_i64(info[6]);
 
-    if (_server_buf_offset < 0 || size_t(_server_buf_offset) >= _server_buf_size) {
-        throw Napi::Error::New(env,
-            XSTR() << "CuObjServerNapi: bad server offset " << DVAL(_server_buf_offset));
-    }
     if (_client_buf_desc.size() + 1 != sizeof CUOBJ_DESC_STR) {
         throw Napi::Error::New(env,
             XSTR() << "CuObjServerNapi: bad client desc " << DVAL(_client_buf_desc));
@@ -455,6 +451,10 @@ CuObjServerWorker::CuObjServerWorker(const Napi::CallbackInfo& info)
     if (_client_buf_offset < 0) {
         throw Napi::Error::New(env,
             XSTR() << "CuObjServerNapi: bad client offset " << DVAL(_client_buf_offset));
+    }
+    if (_server_buf_offset < 0 || size_t(_server_buf_offset) >= _server_buf_size) {
+        throw Napi::Error::New(env,
+            XSTR() << "CuObjServerNapi: bad server offset " << DVAL(_server_buf_offset));
     }
     if (_max_size <= 0 || _max_size > _server_buf_size) {
         throw Napi::Error::New(env,
@@ -468,12 +468,12 @@ CuObjServerWorker::Execute()
     DBG1("CuObjServerNapi: Worker "
         << DVAL(_op_type)
         << DVAL(_op_key)
+        << DVAL(_client_buf_desc)
+        << DVAL(_client_buf_offset)
         << DVAL(_server_buf_handle)
         << DVAL(_server_buf_ptr)
         << DVAL(_server_buf_size)
         << DVAL(_server_buf_offset)
-        << DVAL(_client_buf_desc)
-        << DVAL(_client_buf_offset)
         << DVAL(_max_size));
 
     // TODO(guym) - should we check the client buf desc rsize vs max_size?
@@ -524,19 +524,15 @@ CuObjServerNapi::rdma_async_event(const Napi::CallbackInfo& info)
         throw Napi::Error::New(env,
             XSTR() << "CuObjServerWorker: bad op type " << DVAL(op_type));
     }
-    auto server_buf = info[2].As<Napi::Buffer<uint8_t>>();
+    auto client_buf_desc = napi_get_str(info[2]);
+    auto client_buf_offset = napi_is_defined(info[3]) ? napi_get_i64(info[3]) : 0;
+    auto server_buf = info[4].As<Napi::Buffer<uint8_t>>();
     auto server_buf_handle = _get_server_buf_handle(env, server_buf);
     // auto server_buf_ptr = server_buf.Data();
     auto server_buf_size = server_buf.Length();
-    auto server_buf_offset = napi_is_defined(info[3]) ? napi_get_i64(info[3]) : 0;
-    auto client_buf_desc = napi_get_str(info[4]);
-    auto client_buf_offset = napi_is_defined(info[5]) ? napi_get_i64(info[5]) : 0;
+    auto server_buf_offset = napi_is_defined(info[5]) ? napi_get_i64(info[5]) : 0;
     auto max_size = napi_get_i64(info[6]);
 
-    if (server_buf_offset < 0 || size_t(server_buf_offset) >= server_buf_size) {
-        throw Napi::Error::New(env,
-            XSTR() << "CuObjServerWorker: bad server offset " << DVAL(server_buf_offset));
-    }
     if (client_buf_desc.size() + 1 != sizeof CUOBJ_DESC_STR) {
         throw Napi::Error::New(env,
             XSTR() << "CuObjServerWorker: bad client desc " << DVAL(client_buf_desc));
@@ -544,6 +540,10 @@ CuObjServerNapi::rdma_async_event(const Napi::CallbackInfo& info)
     if (client_buf_offset < 0) {
         throw Napi::Error::New(env,
             XSTR() << "CuObjServerWorker: bad client offset " << DVAL(client_buf_offset));
+    }
+    if (server_buf_offset < 0 || size_t(server_buf_offset) >= server_buf_size) {
+        throw Napi::Error::New(env,
+            XSTR() << "CuObjServerWorker: bad server offset " << DVAL(server_buf_offset));
     }
     if (max_size <= 0 || size_t(max_size) > server_buf_size) {
         throw Napi::Error::New(env,
