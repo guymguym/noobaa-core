@@ -123,6 +123,8 @@ Use the `s3perf` tool to benchmark RDMA vs HTTP performance. Include the `--rdma
 # recommended for testing to set a function or alias to avoid repeating
 # edit the following example parameters
 s3perf() {
+  CUDA_LIB_PATH=$([ -f /etc/redhat-release ] && echo "/usr/lib64/libcuda.so" || echo "/usr/lib/$(uname -p)-linux-gnu/libcuda.so")
+  LD_PRELOAD="$CUDA_LIB_PATH" \
   CONFIG_JS_S3_RDMA_ENABLED=true \
   CUFILE_ENV_PATH_JSON="/etc/cuobj.json" \
   CUDA_VISIBLE_DEVICES=0 \

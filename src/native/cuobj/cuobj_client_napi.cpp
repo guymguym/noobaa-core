@@ -319,11 +319,8 @@ CuObjClientWorker::Execute()
     // caller should ideally register it beforehand, or deregister after use
     ssize_t max_size = client->cuMemObjGetMaxRequestCallbackSize(_ptr);
     if (max_size < static_cast<ssize_t>(_size)) {
-        cuObjErr_t ret_get_mem = client->cuMemObjGetDescriptor(_ptr, _size);
-        if (ret_get_mem != CU_OBJ_SUCCESS) {
-            SetError(XSTR() << "CuObjClientWorker: Failed to register rdma buffer " << DVAL(ret_get_mem));
-            return;
-        }
+        SetError(XSTR() << "CuObjClientWorker: Failed to register rdma buffer " << DVAL(ret_get_mem));
+        return;
     }
 
     if (_op_type == CUOBJ_GET) {
