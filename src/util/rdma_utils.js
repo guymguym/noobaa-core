@@ -507,6 +507,8 @@ function s3_rdma_client_middleware(client_buf, rdma_client) {
             console.warn('S3-RDMA: Failed RDMA operation', ret_size, op_type, client_buf.length);
         }
 
+        if (!result) throw new Error('Result was not set by RDMA callback');
+
         return result;
     };
 }

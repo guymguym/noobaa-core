@@ -1,8 +1,6 @@
 /*
 Usage:
 -----
-g++ -g -Og -o cuguy cuguy.cpp -I/usr/local/cuda/include -Wl,--unresolved-symbols=ignore-in-object-files -ldl
-// or
 g++ -g -Og -o cuguy cuguy.cpp -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcuobjclient -lcuda -ldl
 ./cuguy
 -----
@@ -25,7 +23,7 @@ typedef off_t loff_t;
 using namespace std;
 
 static const int GPU = 0;
-static const int THREADS = 32;
+static const int THREADS = 1;
 static const int ITER = 100;
 static const size_t SIZE = 16 * 1024 * 1024;
 
@@ -92,13 +90,13 @@ struct Buf
 
         cuObjMemoryType_t mem_type = cuObjClient::getMemoryType(addr);
         cerr << "Buf::reg(" << this << "): getMemoryType: mem_type=" << mem_type << endl;
-
-        cuObjErr_t cuobj_err = cuobj->cuMemObjGetDescriptor(addr, size);
+        
+        cuObjErr_t cuobj_err = CU_OBJ_SUCCESS; // cuobj->cuMemObjGetDescriptor(addr, size);
         cerr << "Buf::reg(" << this << "): cuMemObjGetDescriptor: cuobj_err=" << cuobj_err << endl;
-
+        
         ssize_t max_size = cuobj->cuMemObjGetMaxRequestCallbackSize(addr);
         cerr << "Buf::reg(" << this << "): cuMemObjGetMaxRequestCallbackSize: max_size=" << max_size << endl;
-
+        
         MUST_EQ(mem_type, CUOBJ_MEMORY_CUDA_DEVICE);
         MUST_EQ(cuobj_err, CU_OBJ_SUCCESS);
         MUST(max_size >= size, "max callback size " << max_size << " is smaller than buffer size " << size);
@@ -188,18 +186,6 @@ worker(int id)
 int
 main()
 {
-    cerr << "Loading libraries..." << endl;
-    const char* cuda_lib_path = "/usr/lib/x86_64-linux-gnu/libcuda.so";
-    if (!dlopen(cuda_lib_path, RTLD_NOW | RTLD_GLOBAL)) {
-        cerr << "dlopen failed: " << cuda_lib_path << endl;
-        exit(1);
-    }
-    const char* cuobj_lib_path = "/usr/local/cuda/lib64/libcuobjclient.so";
-    if (!dlopen(cuobj_lib_path, RTLD_NOW | RTLD_GLOBAL)) {
-        cerr << "dlopen failed: " << cuobj_lib_path << endl;
-        exit(1);
-    }
-
     cerr << "Initializing CUDA..." << endl;
     CU(cuInit(/* flags */ 0));
     CU(cuDeviceGet(&cuda_device, GPU));
