@@ -57,6 +57,7 @@ const multi_buffer_pool = new buffer_utils.MultiSizeBuffersPool({
         }, {
             size: config.NSFS_BUF_SIZE_XL,
             sem_size: config.NSFS_BUF_POOL_MEM_LIMIT_XL,
+            min_size: config.NSFS_BUF_SIZE_XL, // use this pool only for requests larger or equal than XL size
             release_unused_interval: config.NSFS_BUF_POOL_XL_RELEASE_UNUSED_INTERVAL,
         },
     ],

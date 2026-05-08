@@ -7,6 +7,7 @@ const endpoint_stats_collector = require('../../sdk/endpoint_stats_collector').i
 const { multi_buffer_pool } = require('../../sdk/namespace_fs');
 
 const nsfs_semaphores = {
+    "nsfs_xl": config.NSFS_BUF_SIZE_XL,
     "nsfs_l": config.NSFS_BUF_SIZE_L,
     "nsfs_m": config.NSFS_BUF_SIZE_M,
     "nsfs_s": config.NSFS_BUF_SIZE_S,

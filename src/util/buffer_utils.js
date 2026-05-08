@@ -182,19 +182,21 @@ class BuffersPool {
     /**
      * @param {{
      *      buf_size: number;
+     *      min_size?: number;
      *      sem: import('./semaphore').Semaphore;
-     *      warning_timeout: number;
+     *      warning_timeout?: number;
      *      release_unused_interval?: number;
      *      buffer_alloc?: (size: number) => Buffer;
      * }} params
      */
-    constructor({ buf_size, sem, warning_timeout, release_unused_interval, buffer_alloc }) {
+    constructor({ buf_size, min_size, sem, warning_timeout, release_unused_interval, buffer_alloc }) {
         const MIN_BUFFERS = 8;
         if (sem.value < MIN_BUFFERS * buf_size) {
             dbg.error(`BuffersPool: buffer size ${buf_size} pool size ${sem.value}`,
                 `is too small and should have room for at least ${MIN_BUFFERS} buffers`);
         }
         this.buf_size = buf_size;
+        this.min_size = min_size || 0; // used by MultiSizeBuffersPool
         this.buffers = [];
         this.sem = sem;
         this.warning_timeout = warning_timeout;
@@ -292,6 +294,7 @@ class MultiSizeBuffersPool {
      *      sorted_buf_sizes: Array<{
      *           size: number;
      *           sem_size: number;
+     *           min_size?: number;
      *           is_default?: boolean;
      *           release_unused_interval?: number;
      *      }>;
@@ -303,11 +306,10 @@ class MultiSizeBuffersPool {
      * }} params
      */
     constructor({ sorted_buf_sizes, warning_timeout, sem_timeout, sem_timeout_error_code, sem_warning_timeout, buffer_alloc }) {
-        /** @type {BuffersPool} */
-        this.default_pool = null;
-        this.pools = sorted_buf_sizes.map(({ size, sem_size, is_default, release_unused_interval }) => {
+        this.pools = sorted_buf_sizes.map(({ size, sem_size, min_size, is_default, release_unused_interval }) => {
             const pool = new BuffersPool({
                 buf_size: size,
+                min_size: min_size || 0,
                 sem: new semaphore.Semaphore(sem_size, {
                     timeout: sem_timeout,
                     timeout_error_code: sem_timeout_error_code,
@@ -332,7 +334,7 @@ class MultiSizeBuffersPool {
      * Returns the buffers pool that fits the given size.
      * It returns the largest pool if no size is provided.
      * It returns the smallest pool that covers the given size.
-     * If no pool , the largest pool is returned.
+     * If no pool covers the given size, the largest pool is returned.
      * The caller should be prepared to use buffers larger than the requested size, 
      * or smaller than the requested size if there is no pool for that size.
      * @param {number} [size]
@@ -343,7 +345,7 @@ class MultiSizeBuffersPool {
             return this.default_pool;
         }
         for (const bp of this.pools) {
-            if (size <= bp.buf_size) {
+            if (size <= bp.buf_size && size >= bp.min_size) {
                 return bp;
             }
         }

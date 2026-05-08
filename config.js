@@ -807,28 +807,34 @@ assert(config.NAMESPACE_CACHING.DEFAULT_BLOCK_SIZE > config.INLINE_MAX_SIZE);
 //////////////////
 
 config.NSFS_BUF_SIZE_XS = 4 * 1024;
-config.NSFS_BUF_SIZE_S = 64 * 1024;
-config.NSFS_BUF_SIZE_M = 1 * 1024 * 1024;
-config.NSFS_BUF_SIZE_L = 8 * 1024 * 1024;
-config.NSFS_BUF_SIZE_XL = 64 * 1024 * 1024;
+config.NSFS_BUF_SIZE_S = 64 * 1024; // 16x XS
+config.NSFS_BUF_SIZE_M = 1 * 1024 * 1024; // 16x S
+config.NSFS_BUF_SIZE_L = 16 * 1024 * 1024; // 16x M
+config.NSFS_BUF_SIZE_XL = 64 * 1024 * 1024; // 4x L
 
 // This configs help calculate the number of small and XS buffers that will be created
-// The top number of buffers we want of the small and extra small sizes - 512 seems to be enough
-config.NSFS_WANTED_BUFFERS_NUMBER = 512;
-// XS and S are small enough so we always allocate the max number of wanted buffers (overall ~34MB)
-config.NSFS_BUF_POOL_MEM_LIMIT_XS = config.NSFS_BUF_SIZE_XS * config.NSFS_WANTED_BUFFERS_NUMBER;
-config.NSFS_BUF_POOL_MEM_LIMIT_S = config.NSFS_BUF_SIZE_S * config.NSFS_WANTED_BUFFERS_NUMBER;
-const remaining_mem = Math.max(0, config.BUFFERS_MEM_LIMIT -
-    (config.NSFS_BUF_POOL_MEM_LIMIT_S + config.NSFS_BUF_POOL_MEM_LIMIT_XS));
-// M buffers get 10% of remaining memory, with 4GB mem and M size of 1MB this gives ~400 M buffers
-config.NSFS_BUF_POOL_MEM_LIMIT_M = range_utils.align_down(remaining_mem * 0.1, config.NSFS_BUF_SIZE_M);
-// L buffers share 90% of remaining memory, with 4GB mem and L size of 8MB this gives ~450 L buffers
-config.NSFS_BUF_POOL_MEM_LIMIT_L = range_utils.align_down(remaining_mem * 0.9, config.NSFS_BUF_SIZE_L);
+// The top number of buffers we want of the small and extra small sizes - 256 seems to be enough
+config.NSFS_BUF_POOL_MAX_CONCUR = 256;
+// XS, S, M are small enough so we always allocate the max number of wanted buffers (overall less than 300 MB)
+config.NSFS_BUF_POOL_MEM_LIMIT_XS = config.NSFS_BUF_SIZE_XS * config.NSFS_BUF_POOL_MAX_CONCUR;
+config.NSFS_BUF_POOL_MEM_LIMIT_S = config.NSFS_BUF_SIZE_S * config.NSFS_BUF_POOL_MAX_CONCUR;
+config.NSFS_BUF_POOL_MEM_LIMIT_M = config.NSFS_BUF_SIZE_M * config.NSFS_BUF_POOL_MAX_CONCUR;
+const remaining_mem = Math.max(0,
+    config.BUFFERS_MEM_LIMIT -
+    config.NSFS_BUF_POOL_MEM_LIMIT_XS -
+    config.NSFS_BUF_POOL_MEM_LIMIT_S -
+    config.NSFS_BUF_POOL_MEM_LIMIT_M
+);
+// L buffers use the remaining memory, with 4GB mem and L size of 16MB this gives ~240 L buffers
+config.NSFS_BUF_POOL_MEM_LIMIT_L = Math.min(
+    range_utils.align_down(remaining_mem, config.NSFS_BUF_SIZE_L),
+    config.NSFS_BUF_SIZE_L * config.NSFS_BUF_POOL_MAX_CONCUR);
 // XL buffers are treated as extension to the memory and will be allocated on top as needed,
 // however we will periodically release unused XL buffers back to the system
-config.NSFS_BUF_POOL_MEM_LIMIT_XL = config.NSFS_WANTED_BUFFERS_NUMBER * config.NSFS_BUF_SIZE_XL;
+config.NSFS_BUF_POOL_XL_MAX_CONCUR = 64;
+config.NSFS_BUF_POOL_MEM_LIMIT_XL = config.NSFS_BUF_POOL_XL_MAX_CONCUR * config.NSFS_BUF_SIZE_XL;
 // XL buffers not used in the last interval will be released back to the system (0 means disable)
-config.NSFS_BUF_POOL_XL_RELEASE_UNUSED_INTERVAL = 0;
+config.NSFS_BUF_POOL_XL_RELEASE_UNUSED_INTERVAL = 60000;
 
 config.NSFS_BUF_WARMUP_SPARSE_FILE_READS = true;
 
@@ -1413,7 +1419,7 @@ function load_nsfs_nc_config() {
         const node_config = config_data.host_customization?.[node_name];
         const merged_config = _.merge(shared_config, node_config || {});
 
-        Object.keys(merged_config).forEach(function(key) {
+        Object.keys(merged_config).forEach(function (key) {
             config[key] = merged_config[key];
         });
         console.warn(`nsfs: config_dir_path=${config.NSFS_NC_CONF_DIR}`);
