@@ -826,9 +826,10 @@ config.NSFS_BUF_POOL_MEM_LIMIT_M = range_utils.align_down(remaining_mem * 0.1, c
 config.NSFS_BUF_POOL_MEM_LIMIT_L = range_utils.align_down(remaining_mem * 0.9, config.NSFS_BUF_SIZE_L);
 // XL buffers are treated as extension to the memory and will be allocated on top as needed,
 // however we will periodically release unused XL buffers back to the system
-config.NSFS_BUF_POOL_MEM_LIMIT_XL = config.NSFS_WANTED_BUFFERS_NUMBER * config.NSFS_BUF_SIZE_XL;
+const max_xl_buffers_count = 64;
+config.NSFS_BUF_POOL_MEM_LIMIT_XL = max_xl_buffers_count * config.NSFS_BUF_SIZE_XL;
 // XL buffers not used in the last interval will be released back to the system (0 means disable)
-config.NSFS_BUF_POOL_XL_RELEASE_UNUSED_INTERVAL = 0;
+config.NSFS_BUF_POOL_XL_RELEASE_UNUSED_INTERVAL = 60000;
 
 config.NSFS_BUF_WARMUP_SPARSE_FILE_READS = true;
 
